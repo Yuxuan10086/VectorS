@@ -1,0 +1,59 @@
+# Build / ROS 2
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编译与中间文件
+*.o
+*.a
+*.so
+*.dylib
+
+# 日志与临时文件
+*.log
+*.tmp
+*.bak
+
+# PDF 与 Office 文档
+*.pdf
+*.doc
+*.docx
+*.dot
+*.dotx
+*.xls
+*.xlsx
+*.xlsm
+*.ppt
+*.pptx
+*.pot
+*.potx
+*.odt
+*.ods
+*.odp
+*.rtf
