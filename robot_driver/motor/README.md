@@ -1,0 +1,80 @@
+# robot_driver
+
+ROS 2 功能包：PD42（正点原子协议）步进闭环驱动的 **SocketCAN 收发** 与 **应用层 SDK**，供上层节点或其它包链接使用。
+
+## 依赖与前置条件
+
+- Linux **SocketCAN**（如 `can0`），波特率等与驱动一致（常用 **500 kbit/s**）。
+- 使用前对 **`CanInterface`** 调用 **`open()`**；进程结束前 **`close()`**（析构也会关闭）。
+- 协议细节与注意事项见同目录 **`doc/电机手册提取.md`**；CAN 帧拆分与队列行为见 **`doc/can_interface_README.md`**。
+
+## 链接方式（CMake）
+
+```cmake
+find_package(robot_driver REQUIRED)
+# 若通过 ament 导出目标名不同，以包内 CMake 导出为准；当前构建产物为静态库 robot_driver_pd42
+target_link_libraries(your_target PRIVATE robot_driver_pd42)
+target_include_directories(your_target PRIVATE ${robot_driver_INCLUDE_DIRS})  # 或依赖 ament 传递的头文件路径
+```
+
+具体以工作空间 **`colcon build`** 后 **`install`** 布局为准；也可在同一 workspace 里 **`target_link_libraries(... robot_driver_pd42)`** 并 **`target_include_directories(... include)`**。
+
+## 类与职责
+
+| 组件 | 作用 |
+|------|------|
+| **`CanInterface`** | 扩展帧发送（下行 ID 固定 **0x1001**）、按路由键组帧接收、发送队列与 ≥2 ms 指令间隔。 |
+| **`pd42_protocol.hpp`** | 自定义串口/CAN 载荷：组帧、校验、`default_can_eff_id`、读应答解析等（无 I/O）；含 **0xF0 / 0x90 / 0x98 / 0x99** 等组帧。 |
+| **`Pd42Motor`** | 面向单轴：构造时下发 **0x6C + 0x04**；其余指令经 **`exchange_` / `send_cmd`** 阻塞等待应答。 |
+
+## `Pd42Motor` 使用步骤（推荐顺序）
+
+1. **`CanInterface can("can0"); can.open();`**
+2. **`Pd42Motor motor(can, motor_id);`**  
+   - `motor_id` 与协议帧内 **从机地址**一致（1–255）；与上行 CAN 扩展帧路由 **`default_can_eff_id(addr)`**（低 4 位）一致。
+3. **`motor.initialize()`** — 清状态 **0xFB** + 使能 **0xFA**。
+4. 按工况 **`motor.set_mode(Pd42CommMode::kPosition / kSpeed / kTorque)`**。  
+   - **内部会先失能再使能再发 0x62**（规避驱动内部目标位置异常）。
+5. 速度模式：**`set_speed(...)`**（**0xF1**）；位置模式：**`set_absolute_position(...)`**（**0xF2**）；力矩模式：**`set_torque(reverse, current_ma)`**（**0xF0**，电流单位 **mA**，范围 **0~3000**）。  
+   - 位置与限位原点单位：**51200 为一圈**（与读位置 **0x2A** 一致）。
+6. （可选）左右限位：**`set_limit_origins(left, right)`** 依次下发左 **0x90**、右 **0x98**；**`set_limit_sw(enable)`** 为 **0x99**（开启后行程受限于已设置的左右原点）。
+7. **急停：`stop()`** — 先发 **0xFC**，成功后立即 **`clear_status()`（0xFB）**，避免驱动长期耗转发烫。
+8. **读反馈（阻塞）：** **`rpm()`**（0x29）、**`pos()`**（0x2A），成功为 `optional` 有值，失败查 **`error_code()`**。  
+   - 角度/位置计数清零：**`zero_position()`**（**0xF8**）。
+
+## 返回值与 `error_code()`
+
+- **控制类**（`initialize`、`set_speed`、`set_torque`、`set_mode`、`set_limit_origins`、`set_limit_sw`、`zero_position` 等）：`bool`，失败时 **`error_code()`** 非 0。  
+  - **0xE1–0xE6**：手册协议错误（应答数据首字节）。  
+  - **0xFF**：等待应答超时；**0xFE**：入队失败；**0xFC**：应答不匹配或解析失败；**0xFB**：下发帧过短（SDK 自检）。  
+  - 手册 **0xFB** 功能码（清状态）与 SDK 哨兵 **0xFB** 含义不同，请以上下文区分。
+- **读取类**（`rpm`、`pos`）：`std::optional`，无值时表示失败，同样看 **`error_code()`**。
+
+## 交互示例可执行文件
+
+```bash
+ros2 run robot_driver pd42_cycle_example can0 5
+```
+
+指令为短名 REPL（`init()`、`spd(100)`、`rpm()` 等），源码见 **`example/test.cpp`**。
+
+简易差速底盘（左前 **5** / 右前 **4**，后轮全向不参与驱动；开环按时间估算位移/转角）：
+
+```bash
+ros2 run robot_driver pd42_test2 can0
+```
+
+交互命令：`go <米>`、`rotate <度>`（1°/s）、`spin <度>`（原地，轮缘 0.1 m/s）。当前源码轴距 **45 cm**（`kTrackM = 0.45`），见 **`example/test2.cpp`**。
+
+## 不在本 SDK 内封装的内容
+
+- **ROS 2 节点 / 话题 / 服务**：由上层包编写，仅链接本库即可。
+- **协议里已有组帧、但未通过 `Pd42Motor` 暴露的指令**：可直接 **`#include <robot_driver/pd42_protocol.hpp>`**，自行 **`can.send(...)` + 自管应答**（谨慎处理与 `Pd42Motor` 共享同一 `CanInterface` 时的收发顺序）。
+
+### 后续：底盘电机 / 关节电机（继承，可选）
+
+- **`Pd42Motor`**：保留完整 **`set_mode` / `set_speed` / `set_absolute_position`**，作为 **通用协议门面**。  
+- **`ChassisMotor`（示例名）**：公有继承 **`Pd42Motor`**，对外只暴露 **`set_speed`、`rpm`、`stop`、`initialize`** 等；内部 **`set_mode(kSpeed)`** 固定在初始化路径，**不提供或禁用位置模式 API**（可用 `private using` / 不转发 `set_absolute_position`，或在文档约定勿调用）。  
+- **`JointMotor`（示例名）**：同样继承 **`Pd42Motor`**，固定 **`set_mode(kPosition)`**，对外 **`set_absolute_position`、`pos`**，弱化或隐藏 **`set_speed`**。  
+
+构造仍可 **`JointMotor(CanInterface &, uint8_t id) : Pd42Motor(...)`**；是否再加一层「底盘驱动」聚合四个轮子属上层 ROS 节点职责，不必塞进 `robot_driver`。
