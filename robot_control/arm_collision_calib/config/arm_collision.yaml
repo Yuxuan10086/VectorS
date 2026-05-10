@@ -1,0 +1,16 @@
+/**:
+  ros__parameters:
+    can_interface: "can0"
+    # 限位相对碰撞点向内收缩（脉冲，51200 一圈）
+    limit_margin_units: 512
+    speed_stop_threshold_rpm: 15.0
+    stall_stable_ms: 150
+    poll_period_ms: 30
+    seek_timeout_s: 120.0
+
+    motor_z_id: 1
+    motor_j1_id: 4
+    motor_j2_id: 5
+    torque_z_ma: 400
+    torque_j1_ma: 200
+    torque_j2_ma: 200
