@@ -10,14 +10,14 @@
 | 子目录（ROS 包名） | 说明 |
 |-------------------|------|
 | **`scan_safety`** | 基于二维激光 `LaserScan` 的 **简单反应式避障**：`cmd_vel_raw` + `/scan` → `cmd_vel`。详见包内 `README.md`。 |
-| **`arm_collision_calib`** | 机械臂 **碰撞限位标定**：读 YAML 配置电机 ID / 碰停电流，调用 **`robot_driver`** 力矩碰停并写入左右限位。详见包内 `README.md`。 |
+| **`scara_arm`** | **SCARA 机械臂控制**（Pd42/CAN）：关节 **`ArmJoint`**、整臂 **`RobotArm`**，碰停限位标定与 `span` 映射。示例可执行文件 **`test`**（J1/J2 关节 + 直连电机终端交互）、**`test2`**（仅构造 **`RobotArm`**，终端只接受 **`calibrate`** 等整臂指令）。详见包内 `README.md`。 |
 | *（预留）* | 例如速度平滑、`twist_mux` 封装、后续纯跟踪等，可按同样方式新增并列包。 |
 
 ## 编译示例
 
 ```bash
 cd ~/robot_ws
-colcon build --packages-select scan_safety arm_collision_calib
+colcon build --packages-select scan_safety scara_arm
 source install/setup.bash
 ```
 

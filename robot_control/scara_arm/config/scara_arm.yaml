@@ -1,0 +1,43 @@
+# 开发时若希望「改此文件后重启节点即生效」，请让 ros2 直接加载本文件，例如：
+#   ros2 run scara_arm test --ros-args --params-file $(realpath src/robot_control/scara_arm/config/scara_arm.yaml)
+# 勿仅用 install/share 下副本（改源码后需 colcon build 才会刷新）。
+/**:
+  ros__parameters:
+    can_interface: "can0"
+    # 限位相对碰撞点向内收缩（脉冲，51200 一圈）
+    limit_margin_units: 512
+    speed_stop_threshold_rpm: 15.0
+    stall_stable_ms: 150
+    poll_period_ms: 30
+    seek_timeout_s: 15.0
+
+    motor_z_id: 4  
+    motor_j1_id: 3
+    motor_j2_id: 2
+    # 碰停标定：堵转电流阈值（mA）；碰停转速见 bump_speed_rpm_*
+    torque_z_ma: 400
+    torque_j1_ma: 1500
+    torque_j2_ma: 1000
+
+    # 堵转保护电流（mA，0~3000）；与各电机构造时 enable_stall_protection 一致
+    stall_current_z_ma: 1000
+    stall_current_j1_ma: 2000
+    stall_current_j2_ma: 1000
+
+    # 通信位置 set_absolute_position：各关节转速（rpm）与加速度档（0~255）
+    position_speed_rpm_z: 100
+    position_speed_rpm_j1: 60
+    position_speed_rpm_j2: 100
+    position_accel_z: 20
+    position_accel_j1: 20
+    position_accel_j2: 20
+
+    # 碰停标定速度（rpm）；加速度档复用 position_accel_*
+    bump_speed_rpm_z: 60
+    bump_speed_rpm_j1: 40
+    bump_speed_rpm_j2: 60
+
+    # 用户侧最大行程（标定自行定义单位：毫米、角度等）
+    span_z: 100.0
+    span_joint1: 180.0
+    span_joint2: 180.0

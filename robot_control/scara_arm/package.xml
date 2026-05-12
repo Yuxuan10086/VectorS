@@ -1,15 +1,15 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>arm_collision_calib</name>
+  <name>scara_arm</name>
   <version>0.0.0</version>
-  <description>机械臂碰撞限位标定（链接 workspace 内 robot_driver 电机 SDK）</description>
+  <description>SCARA 机械臂控制（Pd42 / CAN）：关节模型、碰停限位标定、span 映射与示例节点（链接 motor）</description>
   <maintainer email="yuxuan@todo.todo">yuxuan</maintainer>
   <license>TODO</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>rclcpp</depend>
-  <depend>robot_driver</depend>
+  <depend>motor</depend>
 
   <exec_depend>ros2launch</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
