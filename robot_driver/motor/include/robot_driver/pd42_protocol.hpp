@@ -274,11 +274,23 @@ inline std::vector<uint8_t> make_zero_position_frame(uint8_t addr)
   return build_downlink(addr, 0xF8);
 }
 
-/** 0x6A：堵转保护；enable=true 开启 */
+/** 0x6A：堵转保护；enable=true 开启（手册 4.3.30） */
 inline std::vector<uint8_t> make_stall_protection_frame(uint8_t addr, bool enable)
 {
   const uint8_t b = enable ? 1U : 0U;
   return build_downlink(addr, 0x6A, &b, 1U);
+}
+
+/** 0x6B：堵转电流 mA，范围 0~3000，大端（手册 4.3.31） */
+inline std::vector<uint8_t> make_set_stall_current_frame(uint8_t addr, uint16_t current_ma)
+{
+  uint16_t v = current_ma;
+  if (v > 3000U) {
+    v = 3000U;
+  }
+  uint8_t payload[2];
+  uint16_to_big_endian(v, payload);
+  return build_downlink(addr, 0x6B, payload, 2U);
 }
 
 inline std::vector<uint8_t> make_read_position_frame(uint8_t addr)
@@ -299,6 +311,18 @@ inline std::vector<uint8_t> make_read_run_state_frame(uint8_t addr)
 inline std::vector<uint8_t> make_read_stall_flag_frame(uint8_t addr)
 {
   return build_downlink(addr, 0x2D);
+}
+
+/** 手册 4.3.4：读取相电流（mA） */
+inline std::vector<uint8_t> make_read_phase_current_frame(uint8_t addr)
+{
+  return build_downlink(addr, 0x23);
+}
+
+/** 手册 4.3.15：读取堵转电流设定（mA） */
+inline std::vector<uint8_t> make_read_stall_current_frame(uint8_t addr)
+{
+  return build_downlink(addr, 0x2E);
 }
 
 /** 0x29 应答：Byte2~3 实时转速 int16（RPM），大端 */
@@ -337,6 +361,26 @@ inline std::optional<bool> parse_read_stall_flag(const std::vector<uint8_t> & fr
     return std::nullopt;
   }
   return frame[4] != 0;
+}
+
+/** 手册 4.3.15：应答 Byte2~Byte3 为堵转电流 int16（大端），单位 mA */
+inline std::optional<int16_t> parse_read_stall_current_ma(const std::vector<uint8_t> & frame)
+{
+  if (!reply_success(frame, 0x2E) || frame.size() < 8) {
+    return std::nullopt;
+  }
+  const uint8_t b[2] = {frame[4], frame[5]};
+  return int16_from_big_endian(b);
+}
+
+/** 手册 4.3.4：应答 Byte2~Byte3 为相电流 int16（大端），单位 mA */
+inline std::optional<int16_t> parse_read_phase_current_ma(const std::vector<uint8_t> & frame)
+{
+  if (!reply_success(frame, 0x23) || frame.size() < 8) {
+    return std::nullopt;
+  }
+  const uint8_t b[2] = {frame[4], frame[5]};
+  return int16_from_big_endian(b);
 }
 
 /**
