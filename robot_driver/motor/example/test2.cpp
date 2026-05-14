@@ -1,5 +1,5 @@
 // 简易双前轮差速底盘（左前 id=5，右前 id=4；后轮全向假设不参与驱动，仅几何近似差速）
-// 用法: pd42_test2 [can0]
+// CAN 网卡名见 can_interface.cpp 内常量；用法: pd42_test2
 #include "robot_driver/can_interface.hpp"
 #include "robot_driver/pd42_motor.hpp"
 
@@ -170,11 +170,12 @@ void print_help()
 
 int main(int argc, char * argv[])
 {
-  const std::string iface = (argc >= 2) ? argv[1] : "can0";
+  (void)argc;
+  (void)argv;
 
-  CanInterface can(iface);
+  CanInterface can;
   if (!can.open()) {
-    std::cerr << "无法打开 CAN: " << iface << "\n";
+    std::cerr << "无法打开 CAN（接口名在 can_interface.cpp 内固定）\n";
     return 1;
   }
 

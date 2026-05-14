@@ -15,11 +15,11 @@
 namespace robot_driver
 {
 
-/** SocketCAN：扩展帧；下行 ID 固定 0x1001；异步发送队列与按路由键组帧接收。详见 doc/can_interface_README.md */
+/** SocketCAN：扩展帧；下行 ID 固定 0x1001；异步发送队列与按路由键组帧接收；绑定网卡名见 can_interface.cpp 内常量。详见 doc/can_interface_README.md */
 class CanInterface
 {
 public:
-  explicit CanInterface(std::string interface_name);
+  CanInterface();
   ~CanInterface();
 
   CanInterface(const CanInterface &) = delete;

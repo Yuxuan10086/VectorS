@@ -1,9 +1,5 @@
-# 加载 YAML 并启动 test；子进程无交互终端，无法输入 j1/j2。需要终端交互请用：ros2 run scara_arm test --ros-args --params-file ...
-#
-# 参数文件解析顺序（便于改 src 下 YAML 后无需 colcon install）：
-#   1) launch 参数 params_file 非空
-#   2) 环境变量 SCARA_ARM_PARAMS_FILE 指向存在文件
-#   3) install/share/scara_arm/config/scara_arm.yaml
+# 启动 test；无 TTY 时无法键盘输入，交互请：ros2 run scara_arm test --ros-args --params-file ...
+# 参数：params_file > 环境变量 SCARA_ARM_PARAMS_FILE > install/share/scara_arm/config/scara_arm.yaml
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration

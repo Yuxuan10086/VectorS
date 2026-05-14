@@ -2,6 +2,8 @@
 // 参数须由外部提供（如 --params-file），不设代码内默认值
 #include "scara_arm/robot_arm.hpp"
 
+#include "robot_driver/can_interface.hpp"
+
 #include <rclcpp/rclcpp.hpp>
 
 #include <cerrno>
@@ -18,18 +20,14 @@
 namespace
 {
 
-/** RobotArm 所需 ROS 参数（可与完整 scara_arm.yaml 共存；未列出的键不要求） */
+// RobotArm 所需 ROS 参数（可与 scara_arm.yaml 共存；未列出的键不要求）
 static const char * const kRequiredParams[] = {
-  "can_interface",
   "limit_margin_units",
-  "speed_stop_threshold_rpm",
-  "stall_stable_ms",
-  "poll_period_ms",
-  "seek_timeout_s",
   "motor_z_id",
   "motor_j1_id",
   "motor_j2_id",
-  "torque_z_ma",
+  "torque_z_up_ma",
+  "torque_z_down_ma",
   "torque_j1_ma",
   "torque_j2_ma",
   "stall_current_z_ma",
@@ -61,16 +59,6 @@ bool params_ok(const rclcpp::Node & node, std::string & first_missing)
   return true;
 }
 
-scara_arm::BumpCfg load_bump_cfg(const rclcpp::Node & node)
-{
-  scara_arm::BumpCfg c;
-  (void)node.get_parameter("speed_stop_threshold_rpm", c.rpm_zero_th);
-  (void)node.get_parameter("stall_stable_ms", c.stable_ms);
-  (void)node.get_parameter("poll_period_ms", c.poll_ms);
-  (void)node.get_parameter("seek_timeout_s", c.timeout_s);
-  return c;
-}
-
 std::vector<std::string> split_tokens(const std::string & line)
 {
   std::vector<std::string> tok;
@@ -80,6 +68,13 @@ std::vector<std::string> split_tokens(const std::string & line)
     tok.push_back(std::move(w));
   }
   return tok;
+}
+
+void print_reachable_ranges(const scara_arm::RobotArm & arm)
+{
+  std::cout << "reachable span  Z: [" << arm.reachable_span_min_z << ", " << arm.reachable_span_max_z << "]\n"
+            << "reachable span J1: [" << arm.reachable_span_min_j1 << ", " << arm.reachable_span_max_j1 << "]\n"
+            << "reachable span J2: [" << arm.reachable_span_min_j2 << ", " << arm.reachable_span_max_j2 << "]\n";
 }
 
 void print_robot_arm_help(bool include_ready)
@@ -93,6 +88,8 @@ void print_robot_arm_help(bool include_ready)
   }
   std::cout << "机械臂类指令：\n"
             << "  calibrate   调用 RobotArm::calibrate()\n"
+            << "  ranges      打印各轴可达 span 区间（标定后由 calibrate 写入）\n"
+            << "  move z j1 j2   调用 RobotArm::set_position(z,j1,j2)（须先 calibrate）\n"
             << "  help / ?    本帮助\n"
             << "  q / quit / exit   退出\n\n";
   if (tty) {
@@ -175,10 +172,35 @@ int interactive_session(scara_arm::RobotArm & arm)
       std::cout.flush();
       const bool ok = arm.calibrate();
       std::cout << (ok ? "成功\n" : "失败\n");
+      if (ok) {
+        print_reachable_ranges(arm);
+      }
+      continue;
+    }
+    if (tok.size() == 1U && tok[0] == "ranges") {
+      print_reachable_ranges(arm);
+      continue;
+    }
+    if (tok.size() == 4U && tok[0] == "move") {
+      double sz = 0.0;
+      double s1 = 0.0;
+      double s2 = 0.0;
+      try {
+        sz = std::stod(tok[1]);
+        s1 = std::stod(tok[2]);
+        s2 = std::stod(tok[3]);
+      } catch (const std::exception &) {
+        std::cerr << "用法: move <z_span> <j1_span> <j2_span>（均为浮点数）\n";
+        continue;
+      }
+      std::cout << "RobotArm::set_position -> ";
+      std::cout.flush();
+      const bool ok = arm.set_position(sz, s1, s2);
+      std::cout << (ok ? "成功\n" : "失败\n");
       continue;
     }
 
-    std::cerr << "未知指令；仅支持 calibrate / help / q（见启动时帮助）\n";
+    std::cerr << "未知指令；支持 calibrate / ranges / move / help / q（见启动时帮助）\n";
   }
 
   return 0;
@@ -195,12 +217,12 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
     return 2;
   }
 
-  std::string can;
   std::int32_t margin = 0;
   int id_z = 0;
   int id_j1 = 0;
   int id_j2 = 0;
-  int tz = 0;
+  int tzu = 0;
+  int tzd = 0;
   int tj1 = 0;
   int tj2 = 0;
   int z_stall = 0;
@@ -219,12 +241,12 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
   double span_joint1 = 0.0;
   double span_joint2 = 0.0;
 
-  (void)node->get_parameter("can_interface", can);
   (void)node->get_parameter("limit_margin_units", margin);
   (void)node->get_parameter("motor_z_id", id_z);
   (void)node->get_parameter("motor_j1_id", id_j1);
   (void)node->get_parameter("motor_j2_id", id_j2);
-  (void)node->get_parameter("torque_z_ma", tz);
+  (void)node->get_parameter("torque_z_up_ma", tzu);
+  (void)node->get_parameter("torque_z_down_ma", tzd);
   (void)node->get_parameter("torque_j1_ma", tj1);
   (void)node->get_parameter("torque_j2_ma", tj2);
   (void)node->get_parameter("stall_current_z_ma", z_stall);
@@ -252,8 +274,6 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
     return 2;
   }
 
-  scara_arm::BumpCfg bump = load_bump_cfg(*node);
-
   auto clamp_u16 = [](int v) -> std::uint16_t {
     if (v <= 0) {
       return 0U;
@@ -275,11 +295,18 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
 
   std::unique_ptr<scara_arm::RobotArm> arm;
 
+  robot_driver::CanInterface can;
+  if (!can.open()) {
+    std::cerr << "无法打开 CAN（接口名在 motor 库 can_interface.cpp 内固定）\n";
+    return 1;
+  }
+
   try {
     arm = std::make_unique<scara_arm::RobotArm>(
-      can, uz, uj1, uj2, bump, margin, span_z, span_joint1, span_joint2,
-      static_cast<std::uint16_t>(tz), static_cast<std::uint16_t>(tj1),
-      static_cast<std::uint16_t>(tj2), static_cast<std::uint16_t>(z_stall),
+      can,
+      uz, uj1, uj2, margin, span_z, span_joint1, span_joint2,
+      clamp_u16(tzu), clamp_u16(tzd), static_cast<std::uint16_t>(tj1), static_cast<std::uint16_t>(tj2),
+      static_cast<std::uint16_t>(z_stall),
       static_cast<std::uint16_t>(j1_stall), static_cast<std::uint16_t>(j2_stall), clamp_u16(ps_z),
       clamp_u16(ps_j1), clamp_u16(ps_j2), clamp_u8(pa_z), clamp_u8(pa_j1), clamp_u8(pa_j2),
       clamp_u16(bump_z), clamp_u16(bump_j1), clamp_u16(bump_j2));

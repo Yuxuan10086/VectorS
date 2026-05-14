@@ -1,5 +1,5 @@
 // 交互式调用 Pd42Motor；命令为单词形式，例如 init() / speed(200) / rpm()
-// 用法: pd42_cycle_example [can0] [电机ID]
+// 用法: pd42_cycle_example [电机ID]（CAN 网卡名见 can_interface.cpp 内常量）
 #include "robot_driver/can_interface.hpp"
 #include "robot_driver/pd42_motor.hpp"
 #include "robot_driver/pd42_protocol.hpp"
@@ -141,13 +141,21 @@ const char * error_code_hint(std::uint8_t code)
       return " — SDK：应答与本次指令不匹配或帧异常";
     case 0xFB:
       return " — SDK：下发帧过短";
+    case 0xE1:
+      return " — 帧长度不足";
+    case 0xE2:
+      return " — 帧头错误（非0xC5）";
+    case 0xE3:
+      return " — 帧尾错误（非0x5C）";
+    case 0xE4:
+      return " — 校验和错误";
+    case 0xE5:
+      return " — 不支持的功能码";
+    case 0xE6:
+      return " — 数据不合法";
     default:
-      break;
+      return "";
   }
-  if (code >= 0xE1 && code <= 0xE6) {
-    return " — 手册协议错误（应答首字节）";
-  }
-  return "";
 }
 
 void print_result(bool ok, const robot_driver::Pd42Motor & motor)
@@ -190,7 +198,8 @@ void print_help()
     << "  phase()                        phase_current_ma 相电流 mA（0x23）\n"
     << "  comm()                         comm_mode 本机记录的通信模式（0/1/2 或未知）\n"
     << "其它: help / quit / exit\n"
-    << "错误码: 0xE1～0xE6 手册；0xFA 模式不符；0xFF/FE/FC/FB SDK 内部\n";
+    << "应答错误字节: 0x01 成功；0xE1 帧长度不足；0xE2 帧头非0xC5；0xE3 帧尾非0x5C；"
+    << "0xE4 校验和错误；0xE5 不支持的功能码；0xE6 数据不合法；0xFA 模式不符；0xFF/FE/FC/FB SDK\n";
 }
 
 /** 处理只读命令；已处理返回 true（含失败已打印） */
@@ -455,18 +464,17 @@ bool dispatch(
 
 int main(int argc, char * argv[])
 {
-  const std::string iface = (argc >= 2) ? argv[1] : "can0";
-  const uint8_t motor_id = (argc >= 3) ? static_cast<uint8_t>(std::atoi(argv[2])) : 1U;
+  const uint8_t motor_id = (argc >= 2) ? static_cast<uint8_t>(std::atoi(argv[1])) : 1U;
 
-  robot_driver::CanInterface can(iface);
+  robot_driver::CanInterface can;
   if (!can.open()) {
-    std::cerr << "无法打开 CAN 接口: " << iface << "\n";
+    std::cerr << "无法打开 CAN（接口名在 can_interface.cpp 内固定）\n";
     return 1;
   }
 
   robot_driver::Pd42Motor motor(can, motor_id);
 
-  std::cout << "PD42  iface=" << iface << "  motor_id=" << static_cast<int>(motor.motor_id())
+  std::cout << "PD42  motor_id=" << static_cast<int>(motor.motor_id())
             << "  uplink_eff=0x" << std::hex
             << robot_driver::default_can_eff_id(motor.motor_id()) << std::dec << "\n";
   print_help();

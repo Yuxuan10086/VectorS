@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace robot_driver
@@ -21,7 +22,7 @@ enum class Pd42CommMode : std::uint8_t
 class Pd42Motor
 {
 public:
-  /** 构造完成后按 stall_current_ma 下发堵转电流并开启堵转保护（0~3000 mA） */
+  // 构造：CAN ID + 堵转；内部与其它 API 均经 send_cmd 收发，应答 byte3 非成功则失败（见 error_code）。
   Pd42Motor(CanInterface & can, std::uint8_t motor_id, std::uint16_t stall_current_ma = 2000U);
 
   bool initialize();
@@ -53,12 +54,16 @@ public:
 
   std::uint8_t error_code() const noexcept { return error_code_; }
   std::uint8_t motor_id() const noexcept { return motor_id_; }
+  /** 基于当前 error_code_：含 motor_id、error_code（十六进制）及中文说明，供上层日志/终端输出 */
+  std::string error_hint() const;
+  // error_code==0 时返回「正常」；非零时与 error_hint() 相同
+  std::string status_string() const;
 
   std::optional<Pd42CommMode> comm_mode() const noexcept { return comm_mode_; }
 
 private:
-  std::optional<std::vector<std::uint8_t>> exchange_(const std::vector<std::uint8_t> & bytes);
-  bool send_cmd(const std::vector<std::uint8_t> & bytes);
+  // 发 CAN 并等应答：从机/功能码匹配后读 byte3，仅 kAckOk 时返回整帧
+  std::optional<std::vector<std::uint8_t>> send_cmd(const std::vector<std::uint8_t> & bytes);
 
   CanInterface & can_;
   std::uint8_t motor_id_;

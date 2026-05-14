@@ -29,12 +29,7 @@ namespace
 
 /** 双关节示例所需 ROS 参数（可与完整 scara_arm.yaml 共存；未列出的键不要求） */
 static const char * const kRequiredParams[] = {
-  "can_interface",
   "limit_margin_units",
-  "speed_stop_threshold_rpm",
-  "stall_stable_ms",
-  "poll_period_ms",
-  "seek_timeout_s",
   "motor_j1_id",
   "motor_j2_id",
   "torque_j1_ma",
@@ -64,16 +59,6 @@ bool params_ok(const rclcpp::Node & node, std::string & first_missing)
   return true;
 }
 
-scara_arm::BumpCfg load_bump_cfg(const rclcpp::Node & node)
-{
-  scara_arm::BumpCfg c;
-  (void)node.get_parameter("speed_stop_threshold_rpm", c.rpm_zero_th);
-  (void)node.get_parameter("stall_stable_ms", c.stable_ms);
-  (void)node.get_parameter("poll_period_ms", c.poll_ms);
-  (void)node.get_parameter("seek_timeout_s", c.timeout_s);
-  return c;
-}
-
 /** 整串为合法浮点数时写入 out，否则 false */
 bool parse_double_strict(const std::string & s, double & out)
 {
@@ -95,29 +80,6 @@ std::vector<std::string> split_tokens(const std::string & line)
     tok.push_back(std::move(w));
   }
   return tok;
-}
-
-/** `set_position` 成功后：绿色加粗一行目标脉冲（TTY 下着色；非 TTY 不写入转义序列） */
-void print_last_set_position_pulse_line(const scara_arm::ArmJoint & joint, const char * joint_tag)
-{
-  const auto o = joint.last_set_position_outcome();
-  if (!o) {
-    return;
-  }
-  const bool tty = ::isatty(STDOUT_FILENO) != 0;
-  if (tty) {
-    std::cout << "\033[32m\033[1m";
-  }
-  std::cout << '[' << joint_tag << "] ";
-  if (o->sent_to_motor) {
-    std::cout << "实际下发目标脉冲: " << o->target_pulse;
-  } else {
-    std::cout << "目标脉冲: " << o->target_pulse << "（容差内未重复下发）";
-  }
-  if (tty) {
-    std::cout << "\033[0m";
-  }
-  std::cout << '\n';
 }
 
 namespace motor_cli
@@ -244,13 +206,21 @@ const char * error_code_hint(std::uint8_t code)
       return " — 应答与指令不匹配或帧异常";
     case 0xFB:
       return " — 下发帧过短";
+    case 0xE1:
+      return " — 帧长度不足";
+    case 0xE2:
+      return " — 帧头错误（非0xC5）";
+    case 0xE3:
+      return " — 帧尾错误（非0x5C）";
+    case 0xE4:
+      return " — 校验和错误";
+    case 0xE5:
+      return " — 不支持的功能码";
+    case 0xE6:
+      return " — 数据不合法";
     default:
-      break;
+      return "";
   }
-  if (code >= 0xE1 && code <= 0xE6) {
-    return " — 手册协议错误（应答首字节）";
-  }
-  return "";
 }
 
 std::string format_cmd(const std::string & name, const std::vector<std::string> & args)
@@ -636,7 +606,7 @@ void print_joint_help(std::uint16_t default_torque_j1, std::uint16_t default_tor
             << "j1 limits()\n"
             << "  set_limits（须已完成正向 bump）\n"
             << "j1 move(span)\n"
-            << "  set_position\n"
+            << "  set_position；须 limits() 后，span 在由 margin/H/span_max 算出的可达子区间内\n"
             << "j1 summary()\n"
             << "  标定摘要\n"
             << "j1 <幅度>\n"
@@ -728,7 +698,7 @@ bool try_dispatch_joint_line(
       if (!args.empty()) {
         throw std::runtime_error("limits() 无参数");
       }
-      ok = joint->set_limits();
+      ok = joint->set_limits().has_value();
       motor_cli::print_status_line(joint->motor(), ok);
       return true;
     }
@@ -740,14 +710,29 @@ bool try_dispatch_joint_line(
       if (!parse_double_strict(args[0], span)) {
         throw std::runtime_error("span 须为浮点数");
       }
-      if (span < 0.0 || span > joint->span_max()) {
-        std::cout << "失败 span 须在 [0, " << joint->span_max() << "]\n";
+      const auto Hopt = joint->forward_stop_pulse();
+      const std::int32_t mu = joint->limit_margin_units();
+      double rmin = 0.0;
+      double rmax = 0.0;
+      bool have_range = false;
+      if (Hopt && *Hopt > 2 * mu && joint->span_max() > 0.0) {
+        const double H = static_cast<double>(*Hopt);
+        rmin = (static_cast<double>(mu) / H) * joint->span_max();
+        rmax = (static_cast<double>(*Hopt - mu) / H) * joint->span_max();
+        have_range = true;
+      }
+      if (!have_range) {
+        std::cout << "失败：须先 bump(0) 再 limits() 后 move 才有效\n";
+        return true;
+      }
+      if (span < rmin || span > rmax) {
+        std::cout << "失败 span 须在可达区间 [" << rmin << ", " << rmax << "]（名义最大 " << joint->span_max()
+                  << "）\n";
         return true;
       }
       ok = joint->set_position(span);
       motor_cli::print_status_line(joint->motor(), ok);
       if (ok) {
-        print_last_set_position_pulse_line(*joint, which.c_str());
         std::cout << "  span_now=" << joint->span_now() << '\n';
       }
       return true;
@@ -868,7 +853,6 @@ int interactive_session(
         const bool ok = joint1.set_position(v);
         motor_cli::print_status_line(joint1.motor(), ok);
         if (ok) {
-          print_last_set_position_pulse_line(joint1, "j1");
           std::cout << "  span_now=" << joint1.span_now() << '\n';
         }
         continue;
@@ -887,7 +871,6 @@ int interactive_session(
         const bool ok = joint2.set_position(v);
         motor_cli::print_status_line(joint2.motor(), ok);
         if (ok) {
-          print_last_set_position_pulse_line(joint2, "j2");
           std::cout << "  span_now=" << joint2.span_now() << '\n';
         }
         continue;
@@ -905,15 +888,9 @@ int interactive_session(
         const bool ok1 = joint1.set_position(s1);
         std::cout << "  [j1] ";
         motor_cli::print_status_line(joint1.motor(), ok1);
-        if (ok1) {
-          print_last_set_position_pulse_line(joint1, "j1");
-        }
         const bool ok2 = joint2.set_position(s2);
         std::cout << "  [j2] ";
         motor_cli::print_status_line(joint2.motor(), ok2);
-        if (ok2) {
-          print_last_set_position_pulse_line(joint2, "j2");
-        }
         if (ok1 && ok2) {
           std::cout << "  span_now J1=" << joint1.span_now() << " J2=" << joint2.span_now() << '\n';
         }
@@ -936,12 +913,11 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
   if (!params_ok(*node, missing)) {
     std::cerr
       << "缺少 ROS 参数 \"" << missing
-      << "\"；本示例仅需 J1/J2 与 CAN 相关键（见源码 kRequiredParams）。\n"
+      << "\"；本示例仅需 J1/J2 相关键（见源码 kRequiredParams）。\n"
       << "例如: ros2 run scara_arm test --ros-args --params-file <path/to/scara_arm.yaml>\n";
     return 2;
   }
 
-  std::string can;
   std::int32_t margin = 0;
   int id_j1 = 0;
   int id_j2 = 0;
@@ -958,7 +934,6 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
   double span_joint1 = 0.0;
   double span_joint2 = 0.0;
 
-  (void)node->get_parameter("can_interface", can);
   (void)node->get_parameter("limit_margin_units", margin);
   (void)node->get_parameter("motor_j1_id", id_j1);
   (void)node->get_parameter("motor_j2_id", id_j2);
@@ -983,8 +958,6 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
     return 2;
   }
 
-  scara_arm::BumpCfg bump = load_bump_cfg(*node);
-
   auto clamp_u16 = [](int v) -> std::uint16_t {
     if (v <= 0) {
       return 0U;
@@ -1004,9 +977,9 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
     return static_cast<std::uint8_t>(v);
   };
 
-  auto can_if = std::make_unique<robot_driver::CanInterface>(can);
+  auto can_if = std::make_unique<robot_driver::CanInterface>();
   if (!can_if->open()) {
-    std::cerr << "无法打开 CAN: " << can << '\n';
+    std::cerr << "无法打开 CAN（接口名在 motor 库 can_interface.cpp 内固定）\n";
     return 1;
   }
 
@@ -1021,10 +994,10 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
     m2 = std::make_unique<robot_driver::Pd42Motor>(
       *can_if, uj2, static_cast<std::uint16_t>(j2_stall));
     j1 = std::make_unique<scara_arm::ArmJoint>(
-      *m1, bump, margin, span_joint1, clamp_u16(ps_j1), clamp_u8(pa_j1),
+      *m1, margin, span_joint1, clamp_u16(ps_j1), clamp_u8(pa_j1),
       static_cast<std::uint16_t>(j1_stall), clamp_u16(bump_j1), "J1");
     j2 = std::make_unique<scara_arm::ArmJoint>(
-      *m2, bump, margin, span_joint2, clamp_u16(ps_j2), clamp_u8(pa_j2),
+      *m2, margin, span_joint2, clamp_u16(ps_j2), clamp_u8(pa_j2),
       static_cast<std::uint16_t>(j2_stall), clamp_u16(bump_j2), "J2");
   } catch (const std::exception & e) {
     std::cerr << e.what() << '\n';

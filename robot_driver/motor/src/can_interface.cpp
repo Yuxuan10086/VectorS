@@ -20,14 +20,17 @@ namespace robot_driver
 
 namespace
 {
+/** 本进程绑定的 SocketCAN 接口名（与 `ip link` / `candump` 中名称一致） */
+constexpr char kCanSocketIfName[] = "can0";
+
 constexpr std::chrono::microseconds kInterChunkPause{200};
 constexpr std::chrono::milliseconds kInterCmdPause{2};
 /** 下行（上位机→驱动器）扩展帧 ID，工程约定固定 */
 constexpr uint32_t kDownlinkEffId = 0x1001U;
 }
 
-CanInterface::CanInterface(std::string interface_name)
-: iface_(std::move(interface_name)) {}
+CanInterface::CanInterface()
+: iface_(kCanSocketIfName) {}
 
 CanInterface::~CanInterface()
 {

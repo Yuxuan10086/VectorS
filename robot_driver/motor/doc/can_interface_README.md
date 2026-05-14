@@ -14,6 +14,8 @@
 
 本类 **不负责** 协议语义（功能码、寄存器等），仅传递与重组字节流。
 
+**SocketCAN 接口名**：在 `can_interface.cpp` 匿名命名空间中以常量 **`kCanSocketIfName`** 固定（默认 **`can0`**），`open()` 时 `bind` 到该接口；换网卡或 vcan 时请改该常量。
+
 ---
 
 ## 2. 线程模型
