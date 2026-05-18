@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>robot_platform</name>
+  <version>0.0.0</version>
+  <description>整机硬件装配：共用 CAN，实例化 chassis 与 scara_arm</description>
+  <maintainer email="yuxuan@todo.todo">yuxuan</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>motor</depend>
+  <depend>chassis</depend>
+  <depend>scara_arm</depend>
+
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

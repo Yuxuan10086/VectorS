@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>robot_ws 源码说明 · TRT 机器人实验室</title>
+  <style>
+    :root {
+      --bg: #f6f8fa;
+      --card: #fff;
+      --text: #1f2328;
+      --muted: #656d76;
+      --accent: #0969da;
+      --border: #d0d7de;
+      --field-blue: #4a90d9;
+      --zone-grad: linear-gradient(180deg, #ffe566 0%, #ffb84d 100%);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      font-size: 15px;
+    }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    h1 { font-size: 1.75rem; border-bottom: 2px solid var(--accent); padding-bottom: 0.4rem; }
+    h2 { font-size: 1.35rem; margin-top: 2.25rem; color: #0d419d; }
+    h3 { font-size: 1.1rem; margin-top: 1.5rem; }
+    p.lead { color: var(--muted); }
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      margin-top: 1.25rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0;
+      font-size: 0.92rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.5rem 0.65rem;
+      text-align: left;
+    }
+    th { background: #eef2f7; font-weight: 600; }
+    code, pre {
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 0.88em;
+    }
+    pre {
+      background: #f0f3f6;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.85rem 1rem;
+      overflow-x: auto;
+    }
+    ul { padding-left: 1.25rem; }
+    li { margin: 0.35rem 0; }
+    hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+    .note { font-size: 0.9rem; color: var(--muted); margin-top: 1rem; }
+    .tag {
+      display: inline-block;
+      background: #ddf4ff;
+      color: #0550ae;
+      padding: 0.1rem 0.45rem;
+      border-radius: 4px;
+      font-size: 0.85em;
+      font-weight: 500;
+    }
+
+    /* 竞赛场地 */
+    .field-wrap { margin: 1rem 0; overflow-x: auto; }
+    .field-caption { font-size: 0.88rem; color: var(--muted); margin-bottom: 0.5rem; }
+    .field {
+      position: relative;
+      width: 400px;
+      height: 400px;
+      background: var(--field-blue);
+      border: 2px solid #1a3a5c;
+      flex-shrink: 0;
+    }
+    .zone {
+      position: absolute;
+      background: var(--zone-grad);
+      border: 1.5px solid #1a1a1a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.25;
+      padding: 2px;
+      color: #111;
+    }
+    .zone .sub { font-size: 9px; font-weight: 400; margin-top: 2px; }
+    .zone-e { left: 0; top: 0; width: 50px; height: 50px; }
+    .zone-d { right: 0; top: 0; width: 80px; height: 40px; }
+    .zone-f { left: 0; top: 72px; width: 50px; height: 50px; }
+    .zone-a { left: 0; bottom: 0; width: 50px; height: 128px; }
+    .zone-b, .zone-c { width: 40px; height: 200px; top: 100px; }
+    .zone-b { left: 95px; }
+    .zone-c { left: 265px; }
+    .slot {
+      width: 14px;
+      height: 14px;
+      background: #fff;
+      border: 1px solid #333;
+      margin: 3px auto;
+      font-size: 8px;
+      line-height: 12px;
+      font-weight: 700;
+    }
+    .slots { display: flex; flex-direction: column; margin-top: 4px; }
+    .gap-label {
+      position: absolute;
+      left: 135px;
+      top: 188px;
+      width: 130px;
+      text-align: center;
+      font-size: 10px;
+      font-weight: 600;
+      color: #0a5c0a;
+      background: rgba(200, 255, 200, 0.85);
+      padding: 2px 4px;
+      border-radius: 3px;
+      pointer-events: none;
+    }
+    .anno {
+      position: absolute;
+      font-size: 9px;
+      color: #fff;
+      text-shadow: 0 0 2px #000;
+      max-width: 120px;
+      line-height: 1.2;
+      pointer-events: none;
+    }
+    .anno-d { right: 4px; top: 44px; text-align: right; }
+    .anno-bc { left: 88px; top: 78px; }
+    .anno-a { left: 54px; bottom: 8px; }
+    .rules-grid { display: grid; gap: 1rem; }
+    @media (min-width: 640px) {
+      .rules-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .score-list { margin: 0; padding-left: 1.2rem; }
+    .score-list li { margin: 0.25rem 0; }
+    .shelf-diagram {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      align-items: flex-end;
+      margin: 1rem 0;
+    }
+    .shelf-profile {
+      position: relative;
+      width: 140px;
+      height: 155px;
+      border-left: 2px solid #333;
+      border-bottom: 2px solid #333;
+      background: linear-gradient(180deg, #e8e0f0 0%, #c9b8e0 40%);
+    }
+    .shelf-profile .base {
+      position: absolute;
+      left: 18px;
+      bottom: 0;
+      width: 96px;
+      height: 32px;
+      background: #6eb5e8;
+      border: 1px solid #2a6a9a;
+    }
+    .shelf-profile .pillar {
+      position: absolute;
+      width: 7px;
+      height: 42px;
+      background: #f5f5f5;
+      border: 1px solid #888;
+      bottom: 32px;
+    }
+    .shelf-profile .p1 { left: 20px; }
+    .shelf-profile .p2 { left: 105px; }
+    .shelf-profile .top {
+      position: absolute;
+      left: 16px;
+      bottom: 72px;
+      width: 100px;
+      height: 10px;
+      background: #fff;
+      border: 1px solid #666;
+    }
+    .shelf-profile .cube {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      background: #555;
+      border-radius: 1px;
+    }
+    .shelf-profile .cube-lo { bottom: 34px; left: 42px; }
+    .shelf-profile .cube-hi { bottom: 74px; left: 52px; }
+    .shelf-profile .dim {
+      position: absolute;
+      right: -4px;
+      font-size: 9px;
+      color: #333;
+      white-space: nowrap;
+    }
+    .shelf-profile .dim-lo { bottom: 38px; }
+    .shelf-profile .dim-hi { bottom: 78px; }
+    .shelf-caption { font-size: 0.88rem; color: var(--muted); max-width: 200px; }
+    .nav-table td:first-child { width: 28%; font-weight: 600; }
+    .highlight-box {
+      background: #fff8e6;
+      border: 1px solid #e6c200;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      margin: 0.75rem 0;
+    }
+    .zone .slot-lo { border-color: #0969da; box-shadow: 0 0 0 1px #0969da; }
+    .scheme-flow {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.35rem 0.5rem;
+      margin: 1rem 0;
+      font-size: 0.92rem;
+    }
+    .scheme-step {
+      background: #eef2f7;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.4rem 0.65rem;
+    }
+    .scheme-arrow { color: var(--muted); font-weight: 600; }
+    .scheme-table td:first-child { width: 22%; font-weight: 600; white-space: nowrap; }
+    .spec-intro { margin-bottom: 0.75rem; }
+    .robot-arch {
+      margin: 0.75rem 0 1.25rem;
+      max-width: 100%;
+    }
+    .robot-arch svg {
+      width: 100%;
+      max-width: 560px;
+      height: auto;
+      display: block;
+    }
+    .robot-arch .arch-box { stroke-width: 1.5; }
+    .robot-arch .arch-title { font-size: 13px; font-weight: 700; fill: #1f2328; }
+    .robot-arch .arch-sub { font-size: 10px; fill: #656d76; }
+    .robot-arch .arch-label { font-size: 11px; fill: #57606a; font-weight: 500; }
+    .robot-arch .arch-line { stroke: #8b949e; stroke-width: 1.5; fill: none; }
+    .robot-arch .arch-dash { stroke-dasharray: 5 4; }
+    .spec-block { margin-top: 1.1rem; }
+    .spec-block h3 {
+      font-size: 1rem;
+      margin: 0 0 0.35rem;
+      color: #0d419d;
+    }
+    .spec-block .spec-role {
+      font-size: 0.88rem;
+      color: var(--muted);
+      margin: 0 0 0.5rem;
+    }
+    .spec-kv { width: 100%; font-size: 0.92rem; }
+    .spec-kv td:first-child {
+      width: 28%;
+      color: var(--muted);
+      font-weight: 500;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1><code>robot_ws</code> 源码说明 · TRT 机器人实验室</h1>
+    <p class="lead">本工作空间 <code>src</code> 下整机配置、包结构与模块分工。由 <strong>TRT 机器人实验室</strong> 维护；<strong>TRT</strong> 为实验室名称，非机器人型号。</p>
+
+    <section id="spec">
+      <h2>1. 机器人功能与参数</h2>
+      <p class="spec-intro">移动作业机器人：<strong>车载计算</strong>运行整机软件，<strong>移动平台</strong>负责行驶定位，<strong>SCARA 作业臂</strong>完成取放，<strong>电气系统</strong>统一供电并保护。底盘与机械臂共用 <code>robot_driver</code> 中的 CAN 电机栈。</p>
+
+      <figure class="robot-arch" aria-label="整机结构关系图">
+        <svg viewBox="0 0 520 300" role="img" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arch-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#8b949e"/>
+            </marker>
+          </defs>
+
+          <!-- 车载计算 -->
+          <rect class="arch-box" x="130" y="8" width="260" height="52" rx="8" fill="#ddf4ff" stroke="#0969da"/>
+          <text class="arch-title" x="260" y="30" text-anchor="middle">车载计算</text>
+          <text class="arch-sub" x="260" y="48" text-anchor="middle">Centerm · J1900 · Ubuntu · ROS 2 Humble</text>
+
+          <line class="arch-line" x1="260" y1="60" x2="260" y2="78" marker-end="url(#arch-arrow)"/>
+          <text class="arch-label" x="260" y="74" text-anchor="middle">ROS 2 / 网络</text>
+
+          <!-- 整机外框 -->
+          <rect class="arch-box" x="40" y="88" width="440" height="148" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+          <text class="arch-label" x="260" y="104" text-anchor="middle">整机机械与驱动</text>
+
+          <!-- 移动平台 -->
+          <rect class="arch-box" x="58" y="118" width="180" height="72" rx="8" fill="#dafbe1" stroke="#1a7f37"/>
+          <text class="arch-title" x="148" y="142" text-anchor="middle">移动平台</text>
+          <text class="arch-sub" x="148" y="160" text-anchor="middle">铝型材机架 450×450</text>
+          <text class="arch-sub" x="148" y="176" text-anchor="middle">前驱差速 · 后轮全向</text>
+
+          <!-- SCARA -->
+          <rect class="arch-box" x="282" y="118" width="180" height="72" rx="8" fill="#fff1e5" stroke="#bc4c00"/>
+          <text class="arch-title" x="372" y="142" text-anchor="middle">SCARA 作业臂</text>
+          <text class="arch-sub" x="372" y="160" text-anchor="middle">三轴 · Z 丝杆</text>
+          <text class="arch-sub" x="372" y="176" text-anchor="middle">平面关节同步带 · 高约 350 mm</text>
+
+          <!-- 固定安装关系 -->
+          <line class="arch-line arch-dash" x1="238" y1="154" x2="282" y2="154"/>
+          <text class="arch-sub" x="260" y="150" text-anchor="middle">同机架安装</text>
+
+          <!-- 驱动层 -->
+          <rect class="arch-box" x="88" y="200" width="344" height="28" rx="6" fill="#eaeef2" stroke="#8b949e"/>
+          <text class="arch-title" x="260" y="219" text-anchor="middle" font-size="12">5× PD42 · FOC · CAN</text>
+
+          <line class="arch-line" x1="148" y1="190" x2="148" y2="200"/>
+          <line class="arch-line" x1="372" y1="190" x2="372" y2="200"/>
+          <line class="arch-line" x1="260" y1="236" x2="260" y2="254" marker-end="url(#arch-arrow)"/>
+
+          <!-- 电气 -->
+          <rect class="arch-box" x="155" y="258" width="210" height="36" rx="8" fill="#ffe566" stroke="#9a6700"/>
+          <text class="arch-title" x="260" y="276" text-anchor="middle">电气与安全</text>
+          <text class="arch-sub" x="260" y="292" text-anchor="middle">24 V 电池 · 分路保险 · 降压 · 急停</text>
+        </svg>
+      </figure>
+
+      <div class="spec-block">
+        <h3>车载计算</h3>
+        <p class="spec-role">运行导航、感知与机械臂等全部 ROS 节点。</p>
+        <table class="spec-kv">
+          <tr><td>硬件平台</td><td>Centerm 瘦客户端</td></tr>
+          <tr><td>处理器</td><td>Intel J1900</td></tr>
+          <tr><td>内存 / 存储</td><td>4 GB / 32 GB</td></tr>
+          <tr><td>操作系统</td><td>Ubuntu 22.04 Server</td></tr>
+          <tr><td>中间件</td><td>ROS 2 Humble</td></tr>
+          <tr><td>机载网络</td><td><code>192.168.66.66</code>，主机名 <code>robot</code></td></tr>
+        </table>
+      </div>
+
+      <div class="spec-block">
+        <h3>移动平台</h3>
+        <p class="spec-role">承担场地内行驶与停靠；与作业臂固定在同一机架上。</p>
+        <table class="spec-kv">
+          <tr><td>机架</td><td>铝型材，约 <strong>450 mm × 450 mm</strong></td></tr>
+          <tr><td>驱动</td><td>前驱差速</td></tr>
+          <tr><td>后轮</td><td>从动全向轮</td></tr>
+        </table>
+      </div>
+
+      <div class="spec-block">
+        <h3>SCARA 作业臂</h3>
+        <p class="spec-role">安装在移动平台上，面向货架完成底层取放。</p>
+        <table class="spec-kv">
+          <tr><td>构型</td><td>三轴 SCARA，工作高度约 <strong>350 mm</strong></td></tr>
+          <tr><td>Z 轴</td><td>丝杆</td></tr>
+          <tr><td>平面关节</td><td>同步带传动</td></tr>
+        </table>
+      </div>
+
+      <div class="spec-block">
+        <h3>驱动与通信</h3>
+        <p class="spec-role">移动平台与机械臂共 <strong>5</strong> 台正点原子 <strong>PD42</strong> 步进闭环，<strong>FOC</strong>，<strong>CAN</strong> 扩展帧；协议与接口见 <code>robot_driver/motor</code>。</p>
+      </div>
+
+      <div class="spec-block">
+        <h3>电气与安全</h3>
+        <p class="spec-role">为底盘电机、机械臂电机及主控分配电源，并具备独立保护与急停。</p>
+        <table class="spec-kv">
+          <tr><td>动力电池</td><td><strong>24 V</strong>，<strong>2550 mAh</strong></td></tr>
+          <tr><td>工作电流</td><td>持续约 <strong>6 A</strong>，峰值约 <strong>10 A</strong></td></tr>
+          <tr><td>电机支路</td><td>每路 <strong>5 A</strong> 独立保险丝</td></tr>
+          <tr><td>主控供电</td><td>电池经降压模块供电</td></tr>
+          <tr><td>安全</td><td>急停开关</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <section id="structure">
+      <h2>2. 模块与包结构</h2>
+
+      <h3>2.0 目录说明</h3>
+      <ul>
+        <li><code>robot_bringup/</code>、<code>robot_perception/</code>、<code>robot_tasks/</code>：ROS 功能包，根目录含 <code>package.xml</code>。</li>
+        <li><code>robot_driver/</code>、<code>robot_control/</code>：模块目录，根目录无 <code>package.xml</code>，下挂子功能包。</li>
+      </ul>
+
+      <h3>2.1 顶层与模块对照</h3>
+      <table>
+        <thead><tr><th>名称</th><th>角色</th></tr></thead>
+        <tbody>
+          <tr><td><code>robot_driver/</code></td><td>驱动模块</td></tr>
+          <tr><td><code>robot_control/</code></td><td>控制模块，见 <code>robot_control/README.md</code></td></tr>
+          <tr><td><code>robot_bringup</code></td><td>预留：整机 launch</td></tr>
+          <tr><td><code>robot_perception</code></td><td>预留：感知</td></tr>
+          <tr><td><code>robot_tasks</code></td><td>预留：任务逻辑</td></tr>
+        </tbody>
+      </table>
+
+      <p><strong><code>robot_control/</code> 子包</strong></p>
+      <table>
+        <thead><tr><th>子目录</th><th>ROS 包名</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>scan_safety/</code></td>
+            <td><code>scan_safety</code></td>
+            <td>LaserScan 避障，见 <code>README.md</code></td>
+          </tr>
+          <tr>
+            <td><code>robot_platform/</code></td>
+            <td><code>robot_platform</code></td>
+            <td>共用 CAN，装配底盘 + 机械臂</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p><strong><code>robot_driver/</code> 子包</strong></p>
+      <table>
+        <thead><tr><th>子目录</th><th>ROS 包名</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>motor/</code></td>
+            <td><code>motor</code></td>
+            <td>PD42 / SocketCAN，见 <code>README.md</code></td>
+          </tr>
+          <tr>
+            <td><code>chassis/</code></td>
+            <td><code>chassis</code></td>
+            <td>前驱差速底盘 SDK</td>
+          </tr>
+          <tr>
+            <td><code>scara_arm/</code></td>
+            <td><code>scara_arm</code></td>
+            <td>SCARA 机械臂 SDK，见 <code>README.md</code></td>
+          </tr>
+          <tr>
+            <td><code>oradar_lidar/</code></td>
+            <td><code>oradar_lidar</code></td>
+            <td>MS200 激光雷达驱动，见 <code>README.md</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>2.2 <code>robot_driver</code> 子包</h3>
+      <ul>
+        <li><strong><code>motor</code></strong>：CAN 与 Pd42 协议</li>
+        <li><strong><code>chassis</code></strong>、<strong><code>scara_arm</code></strong>：设备 SDK</li>
+        <li><strong><code>oradar_lidar</code></strong>：激光雷达驱动</li>
+      </ul>
+
+      <h3>2.3 <code>robot_control</code> 子包</h3>
+      <ul>
+        <li>模块说明：<code>robot_control/README.md</code></li>
+        <li><code>robot_platform</code>：装配 CAN + 底盘 + 机械臂</li>
+        <li><code>scan_safety</code>：避障</li>
+      </ul>
+    </section>
+
+    <section id="build">
+      <h2>3. 编译与环境</h2>
+      <pre><code>cd ~/robot_ws
+colcon build
+source install/setup.bash</code></pre>
+    </section>
+
+    <section id="scheme">
+      <h2>4. 技术方案</h2>
+      <p><strong>TRT 机器人实验室</strong> 参赛机器人：固定路线粗定位 → 激光精调 → 视觉精调 → 机械自适应兜底。物块贴 <strong>AprilTag</strong>，仅作业<strong>底层</strong>。</p>
+
+      <div class="scheme-flow" aria-label="对准流程">
+        <span class="scheme-step">固定路线到站</span>
+        <span class="scheme-arrow">→</span>
+        <span class="scheme-step">IMU + 底盘 SDK 底层闭环</span>
+        <span class="scheme-arrow">→</span>
+        <span class="scheme-step">激光：距离 + 平行度</span>
+        <span class="scheme-arrow">→</span>
+        <span class="scheme-step">单目 AprilTag：横向</span>
+        <span class="scheme-arrow">→</span>
+        <span class="scheme-step">机械自适应抓取</span>
+      </div>
+
+      <table class="scheme-table">
+        <thead><tr><th>层级</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>路线</td>
+            <td>沿预设固定路线行驶，到达面向目标物块的停靠位。</td>
+          </tr>
+          <tr>
+            <td>底盘底层</td>
+            <td><strong>IMU</strong> 与<strong>底盘 SDK</strong> 融合，只参与底层运动控制：根据<strong>实际运动</strong>与<strong>速度指令</strong>的误差做修正，不承担全局规划。</td>
+          </tr>
+          <tr>
+            <td>激光</td>
+            <td>二维激光调整与柜台/货架的<strong>距离</strong>与<strong>平行度</strong>。</td>
+          </tr>
+          <tr>
+            <td>视觉</td>
+            <td><strong>单目相机</strong>、无深度；识别 AprilTag，解算物块位姿，修正<strong>横向</strong>位置。</td>
+          </tr>
+          <tr>
+            <td>机械</td>
+            <td>SCARA 与机构<strong>自适应</strong>为最后一层兜底，吸收残余误差。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p><strong>数据流</strong>：<code>cmd_vel</code> 经底盘闭环执行 → 到点后激光对齐柜面 → 相机对 tag 横向微调 → 机械臂抓取或放置。</p>
+    </section>
+
+    <section id="competition">
+      <h2>5. 竞赛任务说明</h2>
+      <p>第二十八届中国机器人及人工智能大赛 · 小型桌面级。场地 <strong>400 cm × 400 cm</strong>，A～F 六区；核心区域须保留，改场景不得超出示范尺寸。</p>
+
+      <h3>5.1 场地平面示意</h3>
+      <div class="field-wrap">
+        <p class="field-caption">比例 1 px = 1 cm。格位 1～6 为底层取货位，蓝框为本队作业层。</p>
+        <div class="field" aria-label="400厘米乘400厘米竞赛场地平面图">
+          <div class="zone zone-e">
+            起点E区
+            <span class="sub">50×50 cm</span>
+          </div>
+          <div class="zone zone-d">
+            挑战D区
+            <span class="sub">80×40 cm</span>
+          </div>
+          <div class="zone zone-f">
+            停放F区
+            <span class="sub">50×50 cm</span>
+          </div>
+          <div class="zone zone-a">
+            出货A区
+            <span class="sub">放置区</span>
+          </div>
+          <div class="zone zone-b">
+            商品B区
+            <div class="slots">
+              <span class="slot slot-lo">1</span><span class="slot slot-lo">2</span><span class="slot slot-lo">3</span>
+              <span class="slot slot-lo">4</span><span class="slot slot-lo">5</span><span class="slot slot-lo">6</span>
+            </div>
+            <span class="sub">200×40 cm</span>
+          </div>
+          <div class="zone zone-c">
+            商品C区
+            <div class="slots">
+              <span class="slot slot-lo">1</span><span class="slot slot-lo">2</span><span class="slot slot-lo">3</span>
+              <span class="slot slot-lo">4</span><span class="slot slot-lo">5</span><span class="slot slot-lo">6</span>
+            </div>
+            <span class="sub">200×40 cm</span>
+          </div>
+          <span class="gap-label">间距 130 cm</span>
+          <span class="anno anno-d">底层 25–30 cm<br>高层 65–75 cm</span>
+          <span class="anno anno-bc">商品区货架<br>底层 25–30 cm · 高层 65–75 cm</span>
+          <span class="anno anno-a">出货区货架<br>底层 25–30 cm · 高层 65–75 cm</span>
+        </div>
+      </div>
+
+      <h3>5.2 立体结构与取货层</h3>
+      <p>带围挡桌面场地，地面可通行。平面黄/蓝区块为<strong>双层货架</strong>。</p>
+
+      <div class="shelf-diagram">
+        <div>
+          <div class="shelf-profile" aria-label="货架侧视剖面">
+            <div class="base"></div>
+            <div class="pillar p1"></div>
+            <div class="pillar p2"></div>
+            <div class="top"></div>
+            <span class="cube cube-lo" title="底层货物"></span>
+            <span class="cube cube-hi" title="高层货物"></span>
+            <span class="dim dim-lo">底层 ≈25–30 cm</span>
+            <span class="dim dim-hi">高层 ≈65–75 cm</span>
+          </div>
+          <p class="shelf-caption">货架侧视剖面</p>
+        </div>
+        <div style="flex:1; min-width: 240px;">
+          <p><strong>单元结构</strong>：B/C 长货架、A/D 同类</p>
+          <ul>
+            <li><strong>底层</strong>：浅蓝基座台面，约 <strong>25–30 cm</strong></li>
+            <li><strong>高层</strong>：白立柱 + 白台面，约 <strong>65–75 cm</strong></li>
+            <li>立柱为障碍，进通道须留横向余量</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="highlight-box">
+        <strong>本队取货层</strong>：末端有效高度 <strong>≤400 mm</strong>，仅做底层取货与 A 区底层放置。
+      </div>
+
+      <table class="nav-table">
+        <thead><tr><th>区域</th><th>立体特征</th><th>导航/作业要点</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>B / C 商品区</td>
+            <td>两座平行长货架 200×40 cm，间距 <strong>130 cm</strong> 成巷道；底层格位 1–6 沿长度排列。</td>
+            <td>驶入 B–C 巷道或贴外沿；对准底层格位驻车，侧面伸臂，避立柱。底盘约 450 mm。</td>
+          </tr>
+          <tr>
+            <td>A 出货区</td>
+            <td>左下方形双层架；底层为放置区。</td>
+            <td>物块落在底层台面内；预留臂展，避立柱。</td>
+          </tr>
+          <tr>
+            <td>D 挑战区</td>
+            <td>右上黄色基座 + 白色框架；前方地面<strong>橙色标识</strong>为停靠参考。</td>
+            <td>可选任务；建议从<strong>场地右侧开阔区</strong>绕入，橙标前停车，底层拿货后回 A。</td>
+          </tr>
+          <tr>
+            <td>E / F</td>
+            <td>左上 E 50×50 cm 起点，左中 F 50×50 cm 停放。</td>
+            <td>E 发车；结束须入 F。</td>
+          </tr>
+          <tr>
+            <td>主通道</td>
+            <td>3D 中紫色地面为巡航区；<strong>C 区以东右侧</strong>空地大，适合掉头与 D→A 转运。</td>
+            <td>建议<strong>宽通道巡航 + 巷道精确入位</strong>；激光需关注立柱与上层台面下沿。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p><strong>导航阶段</strong></p>
+      <ol>
+        <li><strong>巡航</strong>：E → 主通道或 B–C 巷道口</li>
+        <li><strong>对接</strong>：低速进巷道，按格位 1–6 驻车</li>
+        <li><strong>作业</strong>：驻车抓取/放置，避免整车前进撞柱。</li>
+        <li><strong>回运</strong>：退出巷道 → 主通道至 A → 可选 D → 入 F。</li>
+      </ol>
+
+      <h3>5.3 任务流程</h3>
+      <ul>
+        <li>赛前声明 <span class="tag">自主</span> / <span class="tag">人工操控</span>；自主运行不得人工操控。</li>
+        <li>赛前抽 <strong>2</strong> 张取货号；区内任选格位抓取。</li>
+        <li><strong>2</strong> 块物块全部入 <strong>A 区</strong>；可选 <strong>D 区</strong> 拿货至 A，<strong>+20</strong> 分。</li>
+        <li>全部任务结束后机器人须<strong>进入 F 区</strong>，否则扣分；抓取时尽量避免碰撞其它物体。</li>
+        <li>自主设备启动后<strong>不得干预系统整体控制</strong>。</li>
+      </ul>
+
+      <h3>5.4 时间与计分</h3>
+      <div class="rules-grid">
+        <div>
+          <ul>
+            <li>入场后、运行前有 <strong>40 分钟</strong>调试；取<strong>最优一次</strong>成绩。</li>
+            <li>每次运行 <strong>10 分钟</strong>，从设备开始运行计时；选手示意完成或到时为一次。</li>
+            <li><strong>技术分 80</strong> + <strong>报告分 20</strong>。</li>
+          </ul>
+        </div>
+        <div>
+          <p><strong>技术分细则</strong></p>
+          <ul class="score-list">
+            <li>拿货 <strong>+20</strong>/件，入 A 放置 <strong>+20</strong>/件，合计上限 <strong>80</strong>；出界 <strong>−10</strong>/件。</li>
+            <li>D 区成功 <strong>+20</strong>，总分仍封顶 <strong>80</strong>。</li>
+            <li>碰撞、跌落、破坏场地、人工干预：每次 <strong>−5</strong>。</li>
+            <li>结束未进 F 区 <strong>−5</strong>。</li>
+            <li>系数：自主控制×导航 <strong>1.5</strong>；算法完成 <strong>1.2</strong>；有人工介入 <strong>1.0</strong>；全程人工 <strong>0.75</strong>。</li>
+          </ul>
+        </div>
+      </div>
+      <p class="note">报告分须含六部分正文与运行视频；细则以赛项群为准。</p>
+    </section>
+
+    <section id="authors">
+      <h2>6. 作者与单位</h2>
+      <p><strong>TRT 机器人实验室</strong>，<strong>河北工程大学数理科学与工程学院</strong></p>
+      <ul>
+        <li><strong>队长</strong>：张宇轩</li>
+        <li><strong>成员</strong>：陶相晨、张佳怡、李晶晶、王运迎、王正宇</li>
+      </ul>
+    </section>
+
+    <p class="note">各子包见目录内 <code>README.md</code>。</p>
+  </div>
+</body>
+</html>

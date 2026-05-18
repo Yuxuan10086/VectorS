@@ -9,7 +9,7 @@
 | **`test`** | `examples/test.cpp` | 读 ROS 参数后构造 **J1/J2** 关节与电机；**不上电自动标定**；终端支持 **关节命令**（`j1` / `j2`）与 **直连电机**（`motor_j1_id` / `motor_j2_id`）。**不含 Z 轴与 `RobotArm`**。 |
 | **`test2`** | `examples/test2.cpp` | 本进程内 **`CanInterface` + open**，再构造 **`RobotArm`（Z + J1 + J2）`**；整臂与底盘合用时请在外部共用一个 **`CanInterface`** 并传入 **`RobotArm`**。终端：**`calibrate`**、**`ranges`**、**`move z j1 j2`**、**`help`**、**`q`**。 |
 
-运行时通过 **`find_package(scara_arm)`** / **`find_package(motor)`** 链接（随 workspace 移植）。
+**`colcon build`** 后提供静态库 **`scara_arm::scara_arm`**（`ArmJoint` / `RobotArm`），供 **`robot_platform`** 等包 `find_package(scara_arm)` 链接。
 
 **`set_position(span)`**：逻辑 **`span ∈ [0, span_max]`**（YAML `span_*`）线性对应脉冲 **`[0, H]`**；因两侧各收缩 **`limit_margin_units`**，**实际可达 span 子区间**由 **`(margin/H)·span_max`** 与名义 **`span_max`** 对称推出。**`ArmJoint::set_limits()`** 仅返回该单侧 span 裕量；**整臂可达区间由 `RobotArm` 在标定后写入公有成员** `reachable_span_min_z` / `reachable_span_max_z`（及 J1/J2 同名）。越界返回失败，**不做静默夹紧**。
 
@@ -35,13 +35,13 @@ source install/setup.bash
 
 ## 配置
 
-编辑 **`src/robot_control/scara_arm/config/scara_arm.yaml`**（源码）。  
+编辑 **`src/robot_driver/scara_arm/config/scara_arm.yaml`**（源码）。  
 **注意**：`ros2 pkg prefix scara_arm` 指向 **install** 目录；仅改源码下的 YAML 而不执行 **`colcon build`**（安装步骤）时，`share/scara_arm/config/` 里的副本**不会更新**。要让「改文件 → 重启节点即生效」而又不想每次安装：
 
 - **推荐**：启动前指定源码 YAML（绝对路径或相对于当前 shell `cwd` 的路径）：
   ```bash
-  ros2 run scara_arm test --ros-args --params-file ~/robot_ws/src/robot_control/scara_arm/config/scara_arm.yaml
-  ros2 run scara_arm test2 --ros-args --params-file ~/robot_ws/src/robot_control/scara_arm/config/scara_arm.yaml
+  ros2 run scara_arm test --ros-args --params-file ~/robot_ws/src/robot_driver/scara_arm/config/scara_arm.yaml
+  ros2 run scara_arm test2 --ros-args --params-file ~/robot_ws/src/robot_driver/scara_arm/config/scara_arm.yaml
   ```
 - **环境变量**（便于 launch）：若设置 **`SCARA_ARM_PARAMS_FILE`** 为上述 YAML 的绝对路径，则 **`ros2 launch scara_arm test.launch.py`** 会优先加载该文件（launch 内解析顺序见 `launch/test.launch.py`）。
 - **Launch 参数**：`params_file:=/path/to/scara_arm.yaml` 优先级最高。

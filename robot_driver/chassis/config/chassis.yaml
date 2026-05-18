@@ -1,0 +1,10 @@
+/**:
+  ros__parameters:
+    motor_left_id: 5
+    motor_right_id: 4
+    left_reverse_inverted: true
+    wheel_diameter_m: 0.08
+    track_m: 0.45
+    travel_speed_m_s: 0.1
+    pivot_wheel_m_s: 0.1
+    drive_accel: 50
