@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>机器人控制面板 · Web Teleop</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;display=swap');
+    
+    :root {
+      --accent: #3b82f6;
+    }
+    
+    body {
+      font-family: 'Inter', system_ui, sans-serif;
+    }
+    
+    .font-display {
+      font-family: 'Space Grotesk', 'Inter', system_ui, sans-serif;
+      font-weight: 600;
+    }
+
+    .section-title {
+      font-size: 0.875rem;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: #64748b;
+    }
+
+    .robot-card {
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .control-btn {
+      transition: all 0.1s ease;
+      user-select: none;
+    }
+    
+    .control-btn:active {
+      transform: scale(0.95);
+      filter: brightness(0.9);
+    }
+
+    .joystick-container {
+      touch-action: none;
+      user-select: none;
+    }
+
+    .status-dot {
+      animation: pulse 2s infinite;
+    }
+
+    .log-line {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+    }
+
+    .mode-badge {
+      font-size: 0.75rem;
+      padding: 2px 10px;
+      border-radius: 9999px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    .panel {
+      background-color: #0f172a;
+      border: 1px solid #1e2937;
+    }
+
+    .metric {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .virtual-knob {
+      box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.3), 0 4px 6px -4px rgb(0 0 0 / 0.3);
+      transition: transform 0.05s linear;
+    }
+
+    .estop {
+      background: linear-gradient(145deg, #ef4444, #b91c1c);
+      box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.3);
+      transition: all 0.1s ease;
+    }
+    
+    .estop:active {
+      transform: scale(0.92);
+      box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.6);
+    }
+
+    .slider-label {
+      font-size: 0.75rem;
+      color: #64748b;
+    }
+
+    .ros-value {
+      background: #1e2937;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, monospace;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-200">
+  <div class="max-w-[1280px] mx-auto">
+    <!-- Header -->
+    <div class="flex items-center justify-between border-b border-slate-800 px-6 py-4">
+      <div class="flex items-center gap-x-3">
+        <div class="w-9 h-9 bg-blue-600 rounded-2xl flex items-center justify-center">
+          <i class="fa-solid fa-robot text-white text-2xl"></i>
+        </div>
+        <div>
+          <div class="font-display text-2xl font-semibold tracking-tighter">机器人控制面板</div>
+          <div class="text-[10px] text-slate-500 -mt-1">WEB TELEOP · FASTAPI + ROS 2</div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-x-3">
+        <!-- Connection Status -->
+        <div class="flex items-center gap-x-2 bg-slate-900 border border-slate-800 rounded-3xl px-3 py-1.5 text-sm">
+          <div id="ws-status-dot" 
+               class="w-2.5 h-2.5 rounded-full bg-red-500 status-dot"></div>
+          <div class="font-medium text-sm">
+            <span id="ws-status-text">未连接</span>
+          </div>
+          <div id="ws-latency" class="text-[10px] text-slate-500 font-mono ml-1"></div>
+        </div>
+
+        <!-- Current Mode -->
+        <div class="flex items-center gap-x-1.5 bg-slate-900 border border-slate-800 rounded-3xl px-1 py-1 text-sm">
+          <div class="px-3 flex items-center gap-x-2">
+            <span class="text-slate-400 text-xs">模式</span>
+            <span id="current-mode-badge" 
+                  class="mode-badge bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">TWIST</span>
+          </div>
+        </div>
+
+        <!-- E-STOP -->
+        <button onclick="sendEmergencyStop()"
+                class="estop flex items-center justify-center gap-x-2 px-5 py-2 rounded-3xl text-white font-semibold text-sm shadow-xl active:scale-[0.985]">
+          <i class="fa-solid fa-hand-paper mr-1"></i>
+          <span class="font-bold tracking-wider">急停 E-STOP</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+      
+      <!-- CHASSIS CONTROL -->
+      <div class="lg:col-span-7 panel rounded-3xl p-5 border border-slate-800">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="section-title flex items-center gap-x-2">
+              <i class="fa-solid fa-car-side"></i>
+              <span>底盘控制 (Chassis)</span>
+            </div>
+            <div class="text-xs text-slate-500 mt-0.5">仅在 TWIST 模式下推荐持续使用</div>
+          </div>
+          <div class="text-right">
+            <div class="text-[10px] text-slate-500">当前速度</div>
+            <div class="font-mono text-sm">
+              <span id="twist-display" class="ros-value text-emerald-400">0.00 m/s, 0.00 rad/s</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-6">
+          <!-- Virtual Joystick -->
+          <div class="md:col-span-3">
+            <div class="text-xs text-slate-400 mb-1.5 flex items-center justify-between px-1">
+              <span>虚拟摇杆</span>
+              <span class="text-[10px] text-slate-500">拖动控制方向与强度</span>
+            </div>
+            <div class="flex justify-center">
+              <div id="joystick-area" 
+                   class="joystick-container relative w-[210px] h-[210px] bg-slate-900 border border-slate-700 rounded-full flex items-center justify-center cursor-crosshair shadow-inner"
+                   onpointerdown="startJoystick(event)" 
+                   onpointermove="moveJoystick(event)"
+                   onpointerup="endJoystick(event)"
+                   onpointerleave="endJoystick(event)"
+                   ontouchstart="startJoystick(event)"
+                   ontouchmove="moveJoystick(event)"
+                   ontouchend="endJoystick(event)">
+                
+                <!-- Joystick base rings -->
+                <div class="absolute w-[178px] h-[178px] border border-slate-700 rounded-full"></div>
+                <div class="absolute w-[120px] h-[120px] border border-slate-600/60 rounded-full"></div>
+                
+                <!-- Knob -->
+                <div id="joystick-knob"
+                     class="virtual-knob absolute w-14 h-14 bg-gradient-to-br from-blue-400 to-blue-600 border-[3px] border-white/30 rounded-full shadow-xl flex items-center justify-center z-10"
+                     style="left: 50%; top: 50%; transform: translate(-50%, -50%);">
+                  <div class="w-3 h-3 bg-white/90 rounded-full"></div>
+                </div>
+                
+                <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div class="text-[9px] text-slate-500 font-medium tracking-[1.5px] select-none">DRAG</div>
+                </div>
+              </div>
+            </div>
+            <div class="flex justify-center mt-1">
+              <button onclick="centerJoystickAndStop()"
+                      class="text-xs px-3 py-1 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 transition rounded-2xl text-slate-400 flex items-center gap-x-1 text-[11px]">
+                <i class="fa-solid fa-sync fa-sm"></i>
+                <span>归零</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Speed Sliders + Quick Buttons -->
+          <div class="md:col-span-2 space-y-5">
+            <!-- Speed Limits -->
+            <div>
+              <div class="flex justify-between items-baseline mb-1 px-0.5">
+                <div class="slider-label">线速度上限</div>
+                <div id="lin-speed-val" class="font-mono text-xs text-blue-400">0.15 m/s</div>
+              </div>
+              <input type="range" id="lin-speed-slider" min="0.02" max="0.6" step="0.01" value="0.15"
+                     class="w-full accent-blue-500" oninput="updateSpeedLimits()">
+            </div>
+            <div>
+              <div class="flex justify-between items-baseline mb-1 px-0.5">
+                <div class="slider-label">角速度上限</div>
+                <div id="ang-speed-val" class="font-mono text-xs text-blue-400">0.60 rad/s</div>
+              </div>
+              <input type="range" id="ang-speed-slider" min="0.1" max="2.5" step="0.05" value="0.60"
+                     class="w-full accent-blue-500" oninput="updateSpeedLimits()">
+            </div>
+
+            <!-- Quick direction buttons -->
+            <div class="pt-1">
+              <div class="text-[10px] text-slate-400 mb-1.5 px-1">方向快捷键（按住发送，松开归零）</div>
+              <div class="grid grid-cols-3 gap-2 max-w-[210px]">
+                <div></div>
+                <button data-dir="forward"
+                        class="control-btn col-span-1 py-3 bg-slate-800 hover:bg-emerald-600/80 active:bg-emerald-700 border border-slate-700 hover:border-emerald-500 rounded-2xl flex flex-col items-center justify-center text-emerald-300 text-xs font-medium"
+                        onpointerdown="startDirectionHold('forward')" onpointerup="stopDirectionHold()" onpointerleave="stopDirectionHold()">
+                  <i class="fa-solid fa-arrow-up mb-0.5"></i>
+                  <span class="text-[10px]">前进</span>
+                </button>
+                <div></div>
+
+                <button data-dir="left"
+                        class="control-btn py-3 bg-slate-800 hover:bg-amber-600/80 active:bg-amber-700 border border-slate-700 hover:border-amber-500 rounded-2xl flex flex-col items-center justify-center text-amber-300 text-xs font-medium"
+                        onpointerdown="startDirectionHold('left')" onpointerup="stopDirectionHold()" onpointerleave="stopDirectionHold()">
+                  <i class="fa-solid fa-arrow-left mb-0.5"></i>
+                  <span class="text-[10px]">左转</span>
+                </button>
+
+                <button data-dir="stop"
+                        class="control-btn py-2.5 bg-slate-900 hover:bg-slate-700 border border-slate-600 rounded-2xl flex items-center justify-center text-xs text-slate-300 active:bg-red-900/30"
+                        onclick="sendStop()">
+                  <i class="fa-solid fa-stop fa-fw"></i>
+                </button>
+
+                <button data-dir="right"
+                        class="control-btn py-3 bg-slate-800 hover:bg-amber-600/80 active:bg-amber-700 border border-slate-700 hover:border-amber-500 rounded-2xl flex flex-col items-center justify-center text-amber-300 text-xs font-medium"
+                        onpointerdown="startDirectionHold('right')" onpointerup="stopDirectionHold()" onpointerleave="stopDirectionHold()">
+                  <i class="fa-solid fa-arrow-right mb-0.5"></i>
+                  <span class="text-[10px]">右转</span>
+                </button>
+
+                <div></div>
+                <button data-dir="backward"
+                        class="control-btn col-span-1 py-3 bg-slate-800 hover:bg-emerald-600/80 active:bg-emerald-700 border border-slate-700 hover:border-emerald-500 rounded-2xl flex flex-col items-center justify-center text-emerald-300 text-xs font-medium"
+                        onpointerdown="startDirectionHold('backward')" onpointerup="stopDirectionHold()" onpointerleave="stopDirectionHold()">
+                  <i class="fa-solid fa-arrow-down mb-0.5"></i>
+                  <span class="text-[10px]">后退</span>
+                </button>
+                <div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ARM CONTROL -->
+      <div class="lg:col-span-5 panel rounded-3xl p-5 border border-slate-800">
+        <div class="flex items-center justify-between mb-3">
+          <div class="section-title flex items-center gap-x-2">
+            <i class="fa-solid fa-hand-paper"></i>
+            <span>机械臂控制 (Arm)</span>
+          </div>
+          <div class="text-xs px-2 py-0.5 bg-slate-800 rounded-2xl text-slate-400">JointState</div>
+        </div>
+
+        <!-- Arm Sliders -->
+        <div class="space-y-4">
+          <!-- Z -->
+          <div>
+            <div class="flex justify-between text-xs mb-1 px-0.5">
+              <div class="flex items-center gap-x-2"><span class="font-semibold text-sky-400">Z</span> <span class="text-slate-400 text-[10px]">升降</span></div>
+              <div class="font-mono text-sky-400 metric"><span id="arm-z-val">50.0</span></div>
+            </div>
+            <div class="flex items-center gap-x-2">
+              <input type="range" id="arm-z-slider" min="0" max="100" step="0.5" value="50"
+                     class="flex-1 accent-sky-400" oninput="onArmSliderInput('z')">
+              <div class="flex gap-x-1">
+                <button onclick="armStep('z', -5)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">-5</button>
+                <button onclick="armStep('z', -1)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">-1</button>
+                <button onclick="armStep('z', 1)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">+1</button>
+                <button onclick="armStep('z', 5)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">+5</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- J1 -->
+          <div>
+            <div class="flex justify-between text-xs mb-1 px-0.5">
+              <div class="flex items-center gap-x-2"><span class="font-semibold text-amber-400">J1</span> <span class="text-slate-400 text-[10px]">肩关节</span></div>
+              <div class="font-mono text-amber-400 metric"><span id="arm-j1-val">90.0</span></div>
+            </div>
+            <div class="flex items-center gap-x-2">
+              <input type="range" id="arm-j1-slider" min="0" max="180" step="0.5" value="90"
+                     class="flex-1 accent-amber-400" oninput="onArmSliderInput('j1')">
+              <div class="flex gap-x-1">
+                <button onclick="armStep('j1', -5)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">-5</button>
+                <button onclick="armStep('j1', -1)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">-1</button>
+                <button onclick="armStep('j1', 1)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">+1</button>
+                <button onclick="armStep('j1', 5)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">+5</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- J2 -->
+          <div>
+            <div class="flex justify-between text-xs mb-1 px-0.5">
+              <div class="flex items-center gap-x-2"><span class="font-semibold text-violet-400">J2</span> <span class="text-slate-400 text-[10px]">肘关节</span></div>
+              <div class="font-mono text-violet-400 metric"><span id="arm-j2-val">90.0</span></div>
+            </div>
+            <div class="flex items-center gap-x-2">
+              <input type="range" id="arm-j2-slider" min="0" max="180" step="0.5" value="90"
+                     class="flex-1 accent-violet-400" oninput="onArmSliderInput('j2')">
+              <div class="flex gap-x-1">
+                <button onclick="armStep('j2', -5)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">-5</button>
+                <button onclick="armStep('j2', -1)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">-1</button>
+                <button onclick="armStep('j2', 1)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">+1</button>
+                <button onclick="armStep('j2', 5)" class="px-2 py-0.5 text-xs bg-slate-800 hover:bg-slate-700 active:bg-slate-600 rounded-xl w-7">+5</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-3 flex gap-2">
+          <button onclick="applyArmDirect()"
+                  class="flex-1 text-xs py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-2xl flex items-center justify-center gap-x-2 text-slate-200">
+            <i class="fa-solid fa-check-double text-xs"></i>
+            <span>直接设置数值</span>
+          </button>
+          <button onclick="resetArmToInit()"
+                  class="text-xs px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-2xl text-slate-300">
+            <i class="fa-solid fa-undo"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- MODE + ACTIONS -->
+      <div class="lg:col-span-12 panel rounded-3xl p-5 border border-slate-800">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-x-6 gap-y-5">
+          
+          <!-- Mode Switch -->
+          <div class="lg:col-span-4">
+            <div class="section-title mb-2 px-1">底盘驱动模式</div>
+            <div class="flex gap-2">
+              <button id="btn-mode-twist"
+                      onclick="setDriveMode(0)"
+                      class="flex-1 flex items-center justify-center gap-x-2 py-3 rounded-3xl text-sm font-semibold border transition-all bg-emerald-600/90 hover:bg-emerald-600 border-emerald-400 text-white">
+                <i class="fa-solid fa-tachometer-alt"></i>
+                <span>TWIST 速度模式</span>
+              </button>
+              <button id="btn-mode-move"
+                      onclick="setDriveMode(1)"
+                      class="flex-1 flex items-center justify-center gap-x-2 py-3 rounded-3xl text-sm font-semibold border transition-all bg-slate-700 hover:bg-slate-600 border-slate-400 text-slate-100">
+                <i class="fa-solid fa-arrows-alt"></i>
+                <span>MOVE 阻塞模式</span>
+              </button>
+            </div>
+            <div class="text-[10px] text-slate-500 mt-1.5 px-1">
+              TWIST：持续速度 + 300ms 看门狗<br>
+              MOVE：精确距离/角度 Action（需先切换）
+            </div>
+          </div>
+
+          <!-- MOVE Actions -->
+          <div class="lg:col-span-8">
+            <div class="section-title mb-2 px-1 flex items-center gap-x-2">
+              <span>阻塞移动 Action（仅 MOVE 模式有效）</span>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- ChassisMove -->
+              <div class="bg-slate-900/70 border border-slate-700 rounded-2xl p-3">
+                <div class="text-emerald-400 text-xs font-medium mb-2 flex items-center gap-x-1.5">
+                  <i class="fa-solid fa-arrow-right"></i>
+                  <span>ChassisMove · 直线移动</span>
+                </div>
+                <div class="flex gap-x-2 items-end">
+                  <div class="flex-1">
+                    <div class="text-[10px] text-slate-400 mb-px">距离 (m)</div>
+                    <input id="move-dist" type="number" step="0.1" value="0.8" class="w-full bg-slate-950 border border-slate-600 focus:border-emerald-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
+                  </div>
+                  <div class="flex-1">
+                    <div class="text-[10px] text-slate-400 mb-px">速度 (m/s)</div>
+                    <input id="move-speed" type="number" step="0.05" value="0.25" class="w-full bg-slate-950 border border-slate-600 focus:border-emerald-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
+                  </div>
+                  <div class="flex gap-x-1">
+                    <button onclick="sendMoveAction()" 
+                            class="px-4 py-2 text-xs bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-500 rounded-2xl font-medium">发送</button>
+                    <button onclick="cancelCurrentAction('move')" 
+                            class="px-3 py-2 text-xs bg-slate-700 hover:bg-red-700/70 rounded-2xl">取消</button>
+                  </div>
+                </div>
+                <div class="mt-2">
+                  <div class="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div id="move-progress" class="h-1.5 bg-emerald-400 transition-all" style="width: 0%"></div>
+                  </div>
+                  <div class="flex justify-between text-[10px] text-slate-400 mt-px">
+                    <div>剩余距离</div>
+                    <div id="move-remain" class="font-mono">—</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ChassisSpan -->
+              <div class="bg-slate-900/70 border border-slate-700 rounded-2xl p-3">
+                <div class="text-amber-400 text-xs font-medium mb-2 flex items-center gap-x-1.5">
+                  <i class="fa-solid fa-sync-alt"></i>
+                  <span>ChassisSpan · 原地转向</span>
+                </div>
+                <div class="flex gap-x-2 items-end">
+                  <div class="flex-1">
+                    <div class="text-[10px] text-slate-400 mb-px">角度 (rad)</div>
+                    <input id="span-angle" type="number" step="0.1" value="1.57" class="w-full bg-slate-950 border border-slate-600 focus:border-amber-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
+                  </div>
+                  <div class="flex-1">
+                    <div class="text-[10px] text-slate-400 mb-px">角速度 (rad/s)</div>
+                    <input id="span-omega" type="number" step="0.1" value="0.6" class="w-full bg-slate-950 border border-slate-600 focus:border-amber-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
+                  </div>
+                  <div class="flex gap-x-1">
+                    <button onclick="sendSpanAction()" 
+                            class="px-4 py-2 text-xs bg-amber-700 hover:bg-amber-600 active:bg-amber-500 rounded-2xl font-medium">发送</button>
+                    <button onclick="cancelCurrentAction('span')" 
+                            class="px-3 py-2 text-xs bg-slate-700 hover:bg-red-700/70 rounded-2xl">取消</button>
+                  </div>
+                </div>
+                <div class="mt-2">
+                  <div class="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div id="span-progress" class="h-1.5 bg-amber-400 transition-all" style="width: 0%"></div>
+                  </div>
+                  <div class="flex justify-between text-[10px] text-slate-400 mt-px">
+                    <div>剩余角度</div>
+                    <div id="span-remain" class="font-mono">—</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- LOG -->
+      <div class="lg:col-span-12">
+        <div class="flex items-center justify-between mb-1.5 px-1">
+          <div class="section-title">实时日志 / 反馈</div>
+          <button onclick="clearLog()" class="text-xs px-2.5 py-1 hover:bg-slate-800 transition rounded-2xl text-slate-400">
+            <i class="fa-solid fa-trash fa-xs mr-1"></i>清空
+          </button>
+        </div>
+        <div id="log-container" 
+             class="h-36 overflow-auto bg-black/60 border border-slate-800 rounded-3xl p-3 text-xs font-light log-line leading-snug">
+        </div>
+      </div>
+
+    </div>
+
+    <div class="text-center text-[10px] text-slate-500 pb-6">
+      确保 <span class="font-medium text-slate-400">robot_platform</span> 已启动 · 建议使用桌面 Chrome / Edge · 支持手机触屏
+    </div>
+  </div>
+
+  <script>
+    // Tailwind script
+    function initTailwind() {
+      document.documentElement.style.setProperty('--accent', '#3b82f6');
+    }
+
+    // WebSocket
+    let ws = null;
+    let wsConnected = false;
+    let lastPing = 0;
+    let reconnectTimer = null;
+    let joystickActive = false;
+    let joystickSendInterval = null;
+    let currentJoystickVector = { x: 0, y: 0 }; // x = angular, y = linear (normalized -1..1)
+
+    let holdInterval = null;
+    let currentHoldDir = null;
+
+    const LOG_CONTAINER = () => document.getElementById('log-container');
+
+    function log(msg, type = 'info') {
+      const container = LOG_CONTAINER();
+      if (!container) return;
+      const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      const color = type === 'error' ? 'text-red-400' : 
+                    type === 'success' ? 'text-emerald-400' : 
+                    type === 'warn' ? 'text-amber-400' : 'text-slate-300';
+      
+      const line = document.createElement('div');
+      line.className = `flex gap-x-2 ${color}`;
+      line.innerHTML = `<span class="text-slate-500 w-[52px] shrink-0">[${time}]</span><span class="flex-1">${msg}</span>`;
+      container.appendChild(line);
+      container.scrollTop = container.scrollHeight;
+
+      // keep max 80 lines
+      while (container.children.length > 80) {
+        container.removeChild(container.firstChild);
+      }
+    }
+
+    function clearLog() {
+      const c = LOG_CONTAINER();
+      if (c) c.innerHTML = '';
+    }
+
+    function updateWSStatus(connected, latencyMs = null) {
+      wsConnected = connected;
+      const dot = document.getElementById('ws-status-dot');
+      const text = document.getElementById('ws-status-text');
+      const lat = document.getElementById('ws-latency');
+
+      if (connected) {
+        dot.classList.remove('bg-red-500');
+        dot.classList.add('bg-emerald-400');
+        text.textContent = '已连接';
+        text.classList.add('text-emerald-300');
+        if (latencyMs !== null) {
+          lat.textContent = `${latencyMs}ms`;
+        }
+      } else {
+        dot.classList.remove('bg-emerald-400');
+        dot.classList.add('bg-red-500');
+        text.textContent = '未连接';
+        text.classList.remove('text-emerald-300');
+        lat.textContent = '';
+      }
+    }
+
+    function connectWebSocket() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = `${protocol}//${location.host}/ws`;
+
+      if (ws) {
+        try { ws.close(); } catch(e){}
+      }
+
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        updateWSStatus(true);
+        log('WebSocket 已连接到控制面板后端', 'success');
+        // start heartbeat
+        startHeartbeat();
+      };
+
+      ws.onclose = () => {
+        updateWSStatus(false);
+        log('WebSocket 断开，尝试重连...', 'warn');
+        clearInterval(joystickSendInterval);
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connectWebSocket, 1800);
+      };
+
+      ws.onerror = (e) => {
+        log('WebSocket 错误', 'error');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleServerMessage(data);
+        } catch (e) {
+          console.warn('Bad WS message', event.data);
+        }
+      };
+    }
+
+    function startHeartbeat() {
+      setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          lastPing = Date.now();
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 4500);
+    }
+
+    let currentMode = 0;
+
+    function updateModeUI(mode) {
+      currentMode = mode;
+      const badge = document.getElementById('current-mode-badge');
+      const btnTwist = document.getElementById('btn-mode-twist');
+      const btnMove = document.getElementById('btn-mode-move');
+
+      if (mode === 0) {
+        badge.textContent = 'TWIST';
+        badge.className = 'mode-badge bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+        btnTwist.classList.add('!bg-emerald-600/90', 'border-emerald-400');
+        btnTwist.classList.remove('bg-slate-700');
+        btnMove.classList.remove('!bg-emerald-600/90', 'border-emerald-400');
+        btnMove.classList.add('bg-slate-700');
+      } else {
+        badge.textContent = 'MOVE';
+        badge.className = 'mode-badge bg-sky-500/20 text-sky-400 border border-sky-500/30';
+        btnMove.classList.add('!bg-sky-600/90', 'border-sky-400');
+        btnMove.classList.remove('bg-slate-700');
+        btnTwist.classList.remove('!bg-emerald-600/90', 'border-emerald-400');
+        btnTwist.classList.add('bg-slate-700');
+      }
+    }
+
+    function handleServerMessage(msg) {
+      if (msg.type === 'status') {
+        if (msg.mode !== undefined) updateModeUI(msg.mode);
+        if (msg.arm) {
+          updateArmDisplay(msg.arm.z, msg.arm.j1, msg.arm.j2, false);
+        }
+        if (msg.twist) {
+          updateTwistDisplay(msg.twist.linear_x, msg.twist.angular_z);
+        }
+      } 
+      else if (msg.type === 'twist') {
+        updateTwistDisplay(msg.linear_x, msg.angular_z);
+      }
+      else if (msg.type === 'arm') {
+        updateArmDisplay(msg.z, msg.j1, msg.j2, false);
+      }
+      else if (msg.type === 'mode') {
+        updateModeUI(msg.mode);
+        log(`模式已切换为 ${msg.mode === 0 ? 'TWIST (速度)' : 'MOVE (阻塞)'}`, 'success');
+      }
+      else if (msg.type === 'mode_result') {
+        log(`模式切换结果: ${msg.message || (msg.success ? '成功' : '失败')}`, msg.success ? 'success' : 'error');
+      }
+      else if (msg.type === 'move_feedback') {
+        const remain = msg.distance_remaining_m || 0;
+        const pct = Math.max(0, Math.min(100, (1 - remain / 2.0) * 100)); // rough
+        document.getElementById('move-progress').style.width = pct + '%';
+        document.getElementById('move-remain').textContent = remain.toFixed(2) + ' m';
+      }
+      else if (msg.type === 'span_feedback') {
+        const remain = msg.angle_remaining_rad || 0;
+        const pct = Math.max(0, Math.min(100, (1 - Math.abs(remain) / 3.14) * 100));
+        document.getElementById('span-progress').style.width = pct + '%';
+        document.getElementById('span-remain').textContent = remain.toFixed(2) + ' rad';
+      }
+      else if (msg.type === 'action_result') {
+        const success = msg.success ? '成功' : '失败';
+        log(`${msg.action.toUpperCase()} ${success}：${msg.message || ''}`, msg.success ? 'success' : 'warn');
+        // reset progress on finish
+        if (msg.action === 'move') {
+          document.getElementById('move-progress').style.width = '0%';
+          document.getElementById('move-remain').textContent = '—';
+        } else if (msg.action === 'span') {
+          document.getElementById('span-progress').style.width = '0%';
+          document.getElementById('span-remain').textContent = '—';
+        }
+      }
+      else if (msg.type === 'stopped') {
+        log('已执行急停 / 停止命令', 'warn');
+        updateTwistDisplay(0, 0);
+      }
+      else if (msg.type === 'pong') {
+        if (lastPing) {
+          const rtt = Date.now() - lastPing;
+          document.getElementById('ws-latency').textContent = `${rtt}ms`;
+        }
+      }
+      else if (msg.type === 'error') {
+        log('后端错误: ' + msg.message, 'error');
+      }
+    }
+
+    function sendWS(cmd) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log('未连接到后端，无法发送命令', 'error');
+        return false;
+      }
+      ws.send(JSON.stringify(cmd));
+      return true;
+    }
+
+    // ===== JOYSTICK =====
+    let joyCenterX = 0, joyCenterY = 0, joyRadius = 85;
+
+    function initJoystick() {
+      const area = document.getElementById('joystick-area');
+      const knob = document.getElementById('joystick-knob');
+
+      function updateCenter() {
+        const rect = area.getBoundingClientRect();
+        joyCenterX = rect.width / 2;
+        joyCenterY = rect.height / 2;
+        joyRadius = Math.min(rect.width, rect.height) * 0.38;
+      }
+      updateCenter();
+      window.addEventListener('resize', updateCenter);
+
+      // initial center
+      knob.style.left = '50%';
+      knob.style.top = '50%';
+      knob.style.transform = 'translate(-50%, -50%)';
+    }
+
+    function startJoystick(ev) {
+      joystickActive = true;
+      const area = document.getElementById('joystick-area');
+      const knob = document.getElementById('joystick-knob');
+      
+      moveJoystick(ev);
+
+      if (!joystickSendInterval) {
+        joystickSendInterval = setInterval(() => {
+          if (joystickActive && wsConnected) {
+            const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.15;
+            const maxAng = parseFloat(document.getElementById('ang-speed-slider').value) || 0.6;
+            
+            // y forward positive, x right positive -> angular positive (counter-clockwise convention)
+            const lx = -currentJoystickVector.y * maxLin;  // forward = positive linear
+            const az = currentJoystickVector.x * maxAng;
+            
+            sendWS({ type: 'set_twist', linear_x: lx, angular_z: az });
+          }
+        }, 45);
+      }
+    }
+
+    function moveJoystick(ev) {
+      if (!joystickActive) return;
+      const area = document.getElementById('joystick-area');
+      const knob = document.getElementById('joystick-knob');
+      const rect = area.getBoundingClientRect();
+
+      let clientX = ev.clientX || (ev.touches && ev.touches[0] && ev.touches[0].clientX);
+      let clientY = ev.clientY || (ev.touches && ev.touches[0] && ev.touches[0].clientY);
+
+      if (clientX === undefined || clientY === undefined) return;
+
+      let dx = clientX - rect.left - joyCenterX;
+      let dy = clientY - rect.top - joyCenterY;
+
+      const dist = Math.hypot(dx, dy);
+      const maxDist = joyRadius;
+
+      if (dist > maxDist) {
+        dx = (dx / dist) * maxDist;
+        dy = (dy / dist) * maxDist;
+      }
+
+      // update knob visual
+      knob.style.left = (joyCenterX + dx) + 'px';
+      knob.style.top = (joyCenterY + dy) + 'px';
+      knob.style.transform = 'translate(-50%, -50%)';
+
+      // normalized vector
+      currentJoystickVector.x = dx / maxDist;   // left-right
+      currentJoystickVector.y = dy / maxDist;   // up-down (negative up in screen)
+    }
+
+    function endJoystick(ev) {
+      joystickActive = false;
+      const knob = document.getElementById('joystick-knob');
+      
+      if (joystickSendInterval) {
+        clearInterval(joystickSendInterval);
+        joystickSendInterval = null;
+      }
+
+      // reset visual + send zero
+      knob.style.left = '50%';
+      knob.style.top = '50%';
+      knob.style.transform = 'translate(-50%, -50%)';
+      currentJoystickVector = { x: 0, y: 0 };
+
+      sendWS({ type: 'set_twist', linear_x: 0, angular_z: 0 });
+    }
+
+    function centerJoystickAndStop() {
+      const knob = document.getElementById('joystick-knob');
+      knob.style.left = '50%';
+      knob.style.top = '50%';
+      knob.style.transform = 'translate(-50%, -50%)';
+      currentJoystickVector = { x: 0, y: 0 };
+      sendWS({ type: 'set_twist', linear_x: 0, angular_z: 0 });
+    }
+
+    // ===== DIRECTION HOLD BUTTONS =====
+    function startDirectionHold(dir) {
+      currentHoldDir = dir;
+      if (holdInterval) clearInterval(holdInterval);
+
+      const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.15;
+      const maxAng = parseFloat(document.getElementById('ang-speed-slider').value) || 0.6;
+
+      function sendCurrent() {
+        let lx = 0, az = 0;
+        if (dir === 'forward') lx = maxLin;
+        else if (dir === 'backward') lx = -maxLin;
+        else if (dir === 'left') az = maxAng;
+        else if (dir === 'right') az = -maxAng;
+        
+        sendWS({ type: 'set_twist', linear_x: lx, angular_z: az });
+      }
+
+      sendCurrent();
+      holdInterval = setInterval(sendCurrent, 120);
+    }
+
+    function stopDirectionHold() {
+      if (holdInterval) {
+        clearInterval(holdInterval);
+        holdInterval = null;
+      }
+      currentHoldDir = null;
+      sendWS({ type: 'set_twist', linear_x: 0, angular_z: 0 });
+    }
+
+    function sendStop() {
+      sendWS({ type: 'stop' });
+      centerJoystickAndStop();
+    }
+
+    // ===== ARM =====
+    function updateArmDisplay(z, j1, j2, updateSliders = true) {
+      document.getElementById('arm-z-val').textContent = Number(z).toFixed(1);
+      document.getElementById('arm-j1-val').textContent = Number(j1).toFixed(1);
+      document.getElementById('arm-j2-val').textContent = Number(j2).toFixed(1);
+
+      if (updateSliders) {
+        document.getElementById('arm-z-slider').value = z;
+        document.getElementById('arm-j1-slider').value = j1;
+        document.getElementById('arm-j2-slider').value = j2;
+      }
+    }
+
+    function onArmSliderInput(axis) {
+      const z = parseFloat(document.getElementById('arm-z-slider').value);
+      const j1 = parseFloat(document.getElementById('arm-j1-slider').value);
+      const j2 = parseFloat(document.getElementById('arm-j2-slider').value);
+
+      updateArmDisplay(z, j1, j2, false);
+
+      // send live (throttled by server rate)
+      sendWS({ type: 'set_arm', z: z, j1: j1, j2: j2 });
+    }
+
+    function armStep(axis, delta) {
+      let z = parseFloat(document.getElementById('arm-z-slider').value);
+      let j1 = parseFloat(document.getElementById('arm-j1-slider').value);
+      let j2 = parseFloat(document.getElementById('arm-j2-slider').value);
+
+      if (axis === 'z') z = z + delta;
+      else if (axis === 'j1') j1 = j1 + delta;
+      else if (axis === 'j2') j2 = j2 + delta;
+
+      // clamp roughly in UI
+      if (axis === 'z') z = Math.max(0, Math.min(100, z));
+      else z = Math.max(0, Math.min(180, z)); // rough for j1/j2
+
+      document.getElementById('arm-z-slider').value = z;
+      document.getElementById('arm-j1-slider').value = j1;
+      document.getElementById('arm-j2-slider').value = j2;
+
+      updateArmDisplay(z, j1, j2, false);
+      sendWS({ type: 'arm_delta', dz: (axis==='z'?delta:0), dj1: (axis==='j1'?delta:0), dj2: (axis==='j2'?delta:0) });
+    }
+
+    function applyArmDirect() {
+      const z = parseFloat(document.getElementById('arm-z-slider').value);
+      const j1 = parseFloat(document.getElementById('arm-j1-slider').value);
+      const j2 = parseFloat(document.getElementById('arm-j2-slider').value);
+      sendWS({ type: 'set_arm', z, j1, j2 });
+      log(`机械臂目标已发送: z=${z}, j1=${j1}, j2=${j2}`);
+    }
+
+    function resetArmToInit() {
+      const initZ = 50, initJ1 = 90, initJ2 = 90;
+      document.getElementById('arm-z-slider').value = initZ;
+      document.getElementById('arm-j1-slider').value = initJ1;
+      document.getElementById('arm-j2-slider').value = initJ2;
+      updateArmDisplay(initZ, initJ1, initJ2, false);
+      sendWS({ type: 'set_arm', z: initZ, j1: initJ1, j2: initJ2 });
+    }
+
+    function updateTwistDisplay(lx, az) {
+      const el = document.getElementById('twist-display');
+      el.textContent = `${Number(lx).toFixed(2)} m/s, ${Number(az).toFixed(2)} rad/s`;
+      if (Math.abs(lx) < 0.001 && Math.abs(az) < 0.001) {
+        el.classList.remove('text-emerald-400');
+        el.classList.add('text-slate-400');
+      } else {
+        el.classList.add('text-emerald-400');
+        el.classList.remove('text-slate-400');
+      }
+    }
+
+    // ===== SPEED LIMITS =====
+    function updateSpeedLimits() {
+      const lin = parseFloat(document.getElementById('lin-speed-slider').value);
+      const ang = parseFloat(document.getElementById('ang-speed-slider').value);
+      document.getElementById('lin-speed-val').textContent = lin.toFixed(2) + ' m/s';
+      document.getElementById('ang-speed-val').textContent = ang.toFixed(2) + ' rad/s';
+    }
+
+    // ===== MODE & ACTIONS =====
+    function setDriveMode(mode) {
+      sendWS({ type: 'set_mode', mode: mode });
+      log(`正在请求切换到底盘模式 ${mode === 0 ? 'TWIST' : 'MOVE'} ...`);
+    }
+
+    function sendMoveAction() {
+      const dist = parseFloat(document.getElementById('move-dist').value);
+      const spd = parseFloat(document.getElementById('move-speed').value);
+      if (!dist || !spd) return alert('请输入有效的距离和速度');
+      sendWS({ type: 'send_move', distance_m: dist, speed_mps: spd });
+      log(`发送 ChassisMove: ${dist}m @ ${spd}m/s`);
+      document.getElementById('move-progress').style.width = '5%';
+    }
+
+    function sendSpanAction() {
+      const ang = parseFloat(document.getElementById('span-angle').value);
+      const om = parseFloat(document.getElementById('span-omega').value);
+      if (!ang || !om) return alert('请输入有效的角度和角速度');
+      sendWS({ type: 'send_span', angle_rad: ang, omega_radps: om });
+      log(`发送 ChassisSpan: ${ang}rad @ ${om}rad/s`);
+      document.getElementById('span-progress').style.width = '5%';
+    }
+
+    function cancelCurrentAction(which) {
+      sendWS({ type: 'cancel_actions' });
+      log(`已请求取消 ${which} Action`);
+    }
+
+    function sendEmergencyStop() {
+      sendWS({ type: 'stop' });
+      centerJoystickAndStop();
+      // also try to zero arm? no, just chassis
+      log('紧急停止已触发！所有底盘运动已归零', 'error');
+    }
+
+    // Keyboard support (nice to have)
+    function setupKeyboard() {
+      let keys = {};
+      document.addEventListener('keydown', (e) => {
+        if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+        if (keys[e.key]) return;
+        keys[e.key] = true;
+
+        const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.15;
+        const maxAng = parseFloat(document.getElementById('ang-speed-slider').value) || 0.6;
+
+        if (e.key.toLowerCase() === 'w') sendWS({type:'set_twist', linear_x: maxLin, angular_z: 0});
+        if (e.key.toLowerCase() === 's') sendWS({type:'set_twist', linear_x: -maxLin, angular_z: 0});
+        if (e.key.toLowerCase() === 'a') sendWS({type:'set_twist', linear_x: 0, angular_z: maxAng});
+        if (e.key.toLowerCase() === 'd') sendWS({type:'set_twist', linear_x: 0, angular_z: -maxAng});
+        if (e.key === ' ') { e.preventDefault(); sendEmergencyStop(); }
+      });
+
+      document.addEventListener('keyup', (e) => {
+        keys[e.key] = false;
+        if (['w','s','a','d','W','S','A','D'].includes(e.key)) {
+          sendWS({type:'set_twist', linear_x: 0, angular_z: 0});
+        }
+      });
+    }
+
+    // Init everything
+    function init() {
+      initTailwind();
+      initJoystick();
+      updateSpeedLimits();
+
+      // initial arm display
+      updateArmDisplay(50, 90, 90, true);
+
+      // connect WS
+      connectWebSocket();
+
+      // keyboard
+      setupKeyboard();
+
+      // initial log
+      setTimeout(() => {
+        log('网页控制面板已就绪。建议先启动 robot_platform，再使用本面板。');
+      }, 800);
+
+      // expose some debug
+      window.ROBOT_PANEL = { sendWS, log };
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>

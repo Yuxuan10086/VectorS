@@ -59,6 +59,115 @@ bool params_ok(const rclcpp::Node & node, std::string & first_missing)
   return true;
 }
 
+std::uint16_t clamp_u16(int v)
+{
+  if (v <= 0) {
+    return 0U;
+  }
+  if (v > 65535) {
+    return 65535U;
+  }
+  return static_cast<std::uint16_t>(v);
+}
+
+std::uint8_t clamp_u8(int v)
+{
+  if (v <= 0) {
+    return 0U;
+  }
+  if (v > 255) {
+    return 255U;
+  }
+  return static_cast<std::uint8_t>(v);
+}
+
+bool fill_scara_arm_params_from_node(const rclcpp::Node & node, scara_arm::ScaraArmParams & out)
+{
+  int margin = 0;
+  int id_z = 0;
+  int id_j1 = 0;
+  int id_j2 = 0;
+  int tzu = 0;
+  int tzd = 0;
+  int tj1 = 0;
+  int tj2 = 0;
+  int z_stall = 0;
+  int j1_stall = 0;
+  int j2_stall = 0;
+  int ps_z = 0;
+  int ps_j1 = 0;
+  int ps_j2 = 0;
+  int pa_z = 0;
+  int pa_j1 = 0;
+  int pa_j2 = 0;
+  int bump_z = 0;
+  int bump_j1 = 0;
+  int bump_j2 = 0;
+  double span_z = 0.0;
+  double span_joint1 = 0.0;
+  double span_joint2 = 0.0;
+
+  (void)node.get_parameter("limit_margin_units", margin);
+  (void)node.get_parameter("motor_z_id", id_z);
+  (void)node.get_parameter("motor_j1_id", id_j1);
+  (void)node.get_parameter("motor_j2_id", id_j2);
+  (void)node.get_parameter("torque_z_up_ma", tzu);
+  (void)node.get_parameter("torque_z_down_ma", tzd);
+  (void)node.get_parameter("torque_j1_ma", tj1);
+  (void)node.get_parameter("torque_j2_ma", tj2);
+  (void)node.get_parameter("stall_current_z_ma", z_stall);
+  (void)node.get_parameter("stall_current_j1_ma", j1_stall);
+  (void)node.get_parameter("stall_current_j2_ma", j2_stall);
+  (void)node.get_parameter("position_speed_rpm_z", ps_z);
+  (void)node.get_parameter("position_speed_rpm_j1", ps_j1);
+  (void)node.get_parameter("position_speed_rpm_j2", ps_j2);
+  (void)node.get_parameter("position_accel_z", pa_z);
+  (void)node.get_parameter("position_accel_j1", pa_j1);
+  (void)node.get_parameter("position_accel_j2", pa_j2);
+  (void)node.get_parameter("bump_speed_rpm_z", bump_z);
+  (void)node.get_parameter("bump_speed_rpm_j1", bump_j1);
+  (void)node.get_parameter("bump_speed_rpm_j2", bump_j2);
+  (void)node.get_parameter("span_z", span_z);
+  (void)node.get_parameter("span_joint1", span_joint1);
+  (void)node.get_parameter("span_joint2", span_joint2);
+
+  const auto margin_units = static_cast<std::int32_t>(margin);
+
+  out.z.motor_id = static_cast<std::uint8_t>(id_z);
+  out.z.limit_margin_units = margin_units;
+  out.z.span_max = span_z;
+  out.z.position_speed_rpm = clamp_u16(ps_z);
+  out.z.position_accel = clamp_u8(pa_z);
+  out.z.stall_current_ma = clamp_u16(z_stall);
+  out.z.bump_speed_rpm = clamp_u16(bump_z);
+
+  out.j1.motor_id = static_cast<std::uint8_t>(id_j1);
+  out.j1.limit_margin_units = margin_units;
+  out.j1.span_max = span_joint1;
+  out.j1.position_speed_rpm = clamp_u16(ps_j1);
+  out.j1.position_accel = clamp_u8(pa_j1);
+  out.j1.stall_current_ma = clamp_u16(j1_stall);
+  out.j1.bump_speed_rpm = clamp_u16(bump_j1);
+
+  out.j2.motor_id = static_cast<std::uint8_t>(id_j2);
+  out.j2.limit_margin_units = margin_units;
+  out.j2.span_max = span_joint2;
+  out.j2.position_speed_rpm = clamp_u16(ps_j2);
+  out.j2.position_accel = clamp_u8(pa_j2);
+  out.j2.stall_current_ma = clamp_u16(j2_stall);
+  out.j2.bump_speed_rpm = clamp_u16(bump_j2);
+
+  out.torque_z_up_ma = clamp_u16(tzu);
+  out.torque_z_down_ma = clamp_u16(tzd);
+  out.torque_j1_ma = clamp_u16(tj1);
+  out.torque_j2_ma = clamp_u16(tj2);
+
+  if (out.z.motor_id == 0U || out.j1.motor_id == 0U || out.j2.motor_id == 0U) {
+    return false;
+  }
+  return true;
+}
+
 std::vector<std::string> split_tokens(const std::string & line)
 {
   std::vector<std::string> tok;
@@ -217,81 +326,11 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
     return 2;
   }
 
-  std::int32_t margin = 0;
-  int id_z = 0;
-  int id_j1 = 0;
-  int id_j2 = 0;
-  int tzu = 0;
-  int tzd = 0;
-  int tj1 = 0;
-  int tj2 = 0;
-  int z_stall = 0;
-  int j1_stall = 0;
-  int j2_stall = 0;
-  int ps_z = 0;
-  int ps_j1 = 0;
-  int ps_j2 = 0;
-  int pa_z = 0;
-  int pa_j1 = 0;
-  int pa_j2 = 0;
-  int bump_z = 0;
-  int bump_j1 = 0;
-  int bump_j2 = 0;
-  double span_z = 0.0;
-  double span_joint1 = 0.0;
-  double span_joint2 = 0.0;
-
-  (void)node->get_parameter("limit_margin_units", margin);
-  (void)node->get_parameter("motor_z_id", id_z);
-  (void)node->get_parameter("motor_j1_id", id_j1);
-  (void)node->get_parameter("motor_j2_id", id_j2);
-  (void)node->get_parameter("torque_z_up_ma", tzu);
-  (void)node->get_parameter("torque_z_down_ma", tzd);
-  (void)node->get_parameter("torque_j1_ma", tj1);
-  (void)node->get_parameter("torque_j2_ma", tj2);
-  (void)node->get_parameter("stall_current_z_ma", z_stall);
-  (void)node->get_parameter("stall_current_j1_ma", j1_stall);
-  (void)node->get_parameter("stall_current_j2_ma", j2_stall);
-  (void)node->get_parameter("position_speed_rpm_z", ps_z);
-  (void)node->get_parameter("position_speed_rpm_j1", ps_j1);
-  (void)node->get_parameter("position_speed_rpm_j2", ps_j2);
-  (void)node->get_parameter("position_accel_z", pa_z);
-  (void)node->get_parameter("position_accel_j1", pa_j1);
-  (void)node->get_parameter("position_accel_j2", pa_j2);
-  (void)node->get_parameter("bump_speed_rpm_z", bump_z);
-  (void)node->get_parameter("bump_speed_rpm_j1", bump_j1);
-  (void)node->get_parameter("bump_speed_rpm_j2", bump_j2);
-  (void)node->get_parameter("span_z", span_z);
-  (void)node->get_parameter("span_joint1", span_joint1);
-  (void)node->get_parameter("span_joint2", span_joint2);
-
-  const auto uz = static_cast<std::uint8_t>(id_z);
-  const auto uj1 = static_cast<std::uint8_t>(id_j1);
-  const auto uj2 = static_cast<std::uint8_t>(id_j2);
-
-  if (uz == 0U || uj1 == 0U || uj2 == 0U) {
+  scara_arm::ScaraArmParams ap{};
+  if (!fill_scara_arm_params_from_node(*node, ap)) {
     std::cerr << "motor_z_id / motor_j1_id / motor_j2_id 均不可为 0\n";
     return 2;
   }
-
-  auto clamp_u16 = [](int v) -> std::uint16_t {
-    if (v <= 0) {
-      return 0U;
-    }
-    if (v > 65535) {
-      return 65535U;
-    }
-    return static_cast<std::uint16_t>(v);
-  };
-  auto clamp_u8 = [](int v) -> std::uint8_t {
-    if (v <= 0) {
-      return 0U;
-    }
-    if (v > 255) {
-      return 255U;
-    }
-    return static_cast<std::uint8_t>(v);
-  };
 
   std::unique_ptr<scara_arm::RobotArm> arm;
 
@@ -302,14 +341,7 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
   }
 
   try {
-    arm = std::make_unique<scara_arm::RobotArm>(
-      can,
-      uz, uj1, uj2, margin, span_z, span_joint1, span_joint2,
-      clamp_u16(tzu), clamp_u16(tzd), static_cast<std::uint16_t>(tj1), static_cast<std::uint16_t>(tj2),
-      static_cast<std::uint16_t>(z_stall),
-      static_cast<std::uint16_t>(j1_stall), static_cast<std::uint16_t>(j2_stall), clamp_u16(ps_z),
-      clamp_u16(ps_j1), clamp_u16(ps_j2), clamp_u8(pa_z), clamp_u8(pa_j1), clamp_u8(pa_j2),
-      clamp_u16(bump_z), clamp_u16(bump_j1), clamp_u16(bump_j2));
+    arm = std::make_unique<scara_arm::RobotArm>(can, ap);
   } catch (const std::exception & e) {
     std::cerr << e.what() << '\n';
     return 1;

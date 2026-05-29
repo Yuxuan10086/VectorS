@@ -35,7 +35,7 @@ public:
 
 private:
   bool load_chassis_params(chassis::DiffDriveParams & out);
-  bool create_arm();
+  bool load_scara_arm_params(scara_arm::ScaraArmParams & out);
 
   rclcpp::Node & node_;
   robot_driver::CanInterface can_;

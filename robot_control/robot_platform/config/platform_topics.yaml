@@ -1,0 +1,6 @@
+/**:
+  ros__parameters:
+    chassis_cmd_vel_topic: "/chassis/cmd_vel"
+    arm_joint_command_topic: "/arm/joint_command"
+    arm_joint_names: ["z", "j1", "j2"]
+    imu_topic: "/imu/data_raw"

@@ -1,0 +1,7 @@
+# 直线移动（仅 kMove 模式有效）
+float64 distance_m   # 目标移动距离（米），正值表示前进
+float64 speed_mps    # 线速度（米/秒），正值
+---
+bool success
+---
+float64 distance_remaining_m   # 剩余命令距离（米，与 Goal 同单位）

@@ -22,42 +22,40 @@ void print_calib_fail(const char * step, const robot_driver::Pd42Motor & m)
     std::cerr << '\n' << m.error_hint() << '\n';
   }
 }
+
+ArmJointParams with_joint_tag(ArmJointParams p, const char * tag)
+{
+  if (p.joint_tag == nullptr) {
+    p.joint_tag = tag;
+  }
+  return p;
+}
 }  // namespace
 
-RobotArm::RobotArm(
-  robot_driver::CanInterface & can,
-  std::uint8_t id_z, std::uint8_t id_j1, std::uint8_t id_j2,
-  std::int32_t margin_units,
-  double span_z, double span_joint1, double span_joint2,
-  std::uint16_t torque_z_up_ma, std::uint16_t torque_z_down_ma,
-  std::uint16_t torque_j1_ma, std::uint16_t torque_j2_ma,
-  std::uint16_t stall_current_z_ma, std::uint16_t stall_current_j1_ma,
-  std::uint16_t stall_current_j2_ma,
-  std::uint16_t position_speed_rpm_z, std::uint16_t position_speed_rpm_j1,
-  std::uint16_t position_speed_rpm_j2,
-  std::uint8_t position_accel_z, std::uint8_t position_accel_j1,
-  std::uint8_t position_accel_j2,
-  std::uint16_t bump_speed_rpm_z, std::uint16_t bump_speed_rpm_j1,
-  std::uint16_t bump_speed_rpm_j2)
+RobotArm::RobotArm(robot_driver::CanInterface & can, ScaraArmParams params)
 : can_(can),
-  torque_z_up_ma_(torque_z_up_ma),
-  torque_z_down_ma_(torque_z_down_ma),
-  torque_j1_ma_(torque_j1_ma),
-  torque_j2_ma_(torque_j2_ma)
+  params_(params),
+  torque_z_up_ma_(params.torque_z_up_ma),
+  torque_z_down_ma_(params.torque_z_down_ma),
+  torque_j1_ma_(params.torque_j1_ma),
+  torque_j2_ma_(params.torque_j2_ma)
 {
-  mz_ = std::make_unique<robot_driver::Pd42Motor>(can_, id_z, stall_current_z_ma);
-  jz_ = std::make_unique<ArmJoint>(
-    *mz_, margin_units, span_z, position_speed_rpm_z, position_accel_z, stall_current_z_ma,
-    bump_speed_rpm_z, "Z");
+  if (params_.z.motor_id == 0U || params_.j1.motor_id == 0U || params_.j2.motor_id == 0U) {
+    throw std::invalid_argument("motor_z_id / motor_j1_id / motor_j2_id 均不可为 0");
+  }
 
-  m1_ = std::make_unique<robot_driver::Pd42Motor>(can_, id_j1, stall_current_j1_ma);
-  m2_ = std::make_unique<robot_driver::Pd42Motor>(can_, id_j2, stall_current_j2_ma);
-  j1_ = std::make_unique<ArmJoint>(
-    *m1_, margin_units, span_joint1, position_speed_rpm_j1, position_accel_j1,
-    stall_current_j1_ma, bump_speed_rpm_j1, "J1");
-  j2_ = std::make_unique<ArmJoint>(
-    *m2_, margin_units, span_joint2, position_speed_rpm_j2, position_accel_j2,
-    stall_current_j2_ma, bump_speed_rpm_j2, "J2");
+  const ArmJointParams z = with_joint_tag(params_.z, "Z");
+  const ArmJointParams j1 = with_joint_tag(params_.j1, "J1");
+  const ArmJointParams j2 = with_joint_tag(params_.j2, "J2");
+
+  mz_ = std::make_unique<robot_driver::Pd42Motor>(can_, z.motor_id, z.stall_current_ma);
+  jz_ = std::make_unique<ArmJoint>(*mz_, z);
+
+  m1_ = std::make_unique<robot_driver::Pd42Motor>(can_, j1.motor_id, j1.stall_current_ma);
+  j1_ = std::make_unique<ArmJoint>(*m1_, j1);
+
+  m2_ = std::make_unique<robot_driver::Pd42Motor>(can_, j2.motor_id, j2.stall_current_ma);
+  j2_ = std::make_unique<ArmJoint>(*m2_, j2);
 }
 
 RobotArm::~RobotArm() = default;

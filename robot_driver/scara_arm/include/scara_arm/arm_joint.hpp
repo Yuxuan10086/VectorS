@@ -11,6 +11,19 @@
 namespace scara_arm
 {
 
+/** 单关节配置：与 ArmJoint 构造入参同形；motor_id 由 RobotArm 建 Pd42Motor 使用 */
+struct ArmJointParams
+{
+  std::uint8_t motor_id{};
+  std::int32_t limit_margin_units{};
+  double span_max{};
+  std::uint16_t position_speed_rpm{};
+  std::uint8_t position_accel{};
+  std::uint16_t stall_current_ma{};
+  std::uint16_t bump_speed_rpm{};
+  const char * joint_tag{nullptr};
+};
+
 // bump 相电流轮询周期（ms）、碰停寻边总超时（s），stall_seek_by_speed_ 使用
 inline constexpr int kBumpStallPollPeriodMs = 30;
 inline constexpr double kBumpStallSeekTimeoutS = 25.0;
@@ -19,10 +32,7 @@ inline constexpr double kBumpStallSeekTimeoutS = 25.0;
 class ArmJoint
 {
 public:
-  ArmJoint(
-    robot_driver::Pd42Motor & motor, std::int32_t margin_units, double span_max,
-    std::uint16_t abs_speed_rpm, std::uint8_t abs_accel, std::uint16_t nominal_stall_ma,
-    std::uint16_t bump_speed_rpm, const char * joint_tag);
+  ArmJoint(robot_driver::Pd42Motor & motor, const ArmJointParams & params);
 
   // dir：0 正向 / 1 反向；calibration_stall_ma：碰停相电流阈值 mA；启动后 500ms 内不判到位
   bool bump(std::uint8_t dir, std::uint16_t calibration_stall_ma);

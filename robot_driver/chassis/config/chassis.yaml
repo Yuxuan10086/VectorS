@@ -1,10 +1,8 @@
 /**:
   ros__parameters:
-    motor_left_id: 5
-    motor_right_id: 4
-    left_reverse_inverted: true
-    wheel_diameter_m: 0.08
-    track_m: 0.45
-    travel_speed_m_s: 0.1
-    pivot_wheel_m_s: 0.1
-    drive_accel: 50
+    motor_left_id: 5          # 左驱动轮 CAN 电机 ID
+    motor_right_id: 4         # 右驱动轮 CAN 电机 ID
+    wheel_diameter_m: 0.08    # 驱动轮直径 (m)，用于线速度→RPM
+    track_m: 0.45             # 左右轮中心距 (m)，差速解算用
+    drive_accel: 50           # 速度模式加速度档位 (0–255)
+    encoder_pulses_per_rev: 512000  # 编码器每转脉冲数（电机直连车轮，无减速器）

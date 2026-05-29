@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>manual_control</name>
+  <version>0.1.0</version>
+  <description>网页手动控制面板（FastAPI + WebSocket）：支持底盘 Twist、机械臂 JointState、/chassis/set_mode 服务及阻塞移动 Action（/chassis/move /chassis/span）。兼容原有键盘节点。</description>
+  <maintainer email="yuxuan@todo.todo">yuxuan</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>robot_platform</exec_depend> <!-- 提供 /chassis/set_mode、/chassis/move、/chassis/span 等服务/Action 实现 -->
+  <exec_depend>robot_interfaces</exec_depend> <!-- 自定义 .srv / .action 接口类型定义（轻量解耦） -->
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

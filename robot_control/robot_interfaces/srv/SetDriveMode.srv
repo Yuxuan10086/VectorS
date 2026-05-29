@@ -1,0 +1,11 @@
+# 切换底盘驱动模式
+# TWIST: 速度控制模式（set_twist 有效，启用 300ms 看门狗保护）
+# MOVE : 阻塞移动模式（move / span 有效，无看门狗）
+
+uint8 TWIST=0
+uint8 MOVE=1
+
+uint8 mode
+---
+bool success
+string message

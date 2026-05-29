@@ -15,7 +15,7 @@
 
 ## 流程概要（标定）
 
-1. **外部** 创建并 **`CanInterface::open()`** 后传入 **`RobotArm(CanInterface &, …)`**（可与底盘**共用同一** `CanInterface`）；**`RobotArm` 不拥有、不关闭**该对象。随后各轴 **`ArmJoint`**：**initialize → 关限位 → 位置模式**，**不在构造时清零脉冲**（零点在反向 bump 末 **`set_zero_position`**）。  
+1. **外部** 创建并 **`CanInterface::open()`** 后，用 **`ScaraArmParams`**（三轴各一 **`ArmJointParams`** + 标定扭矩）构造 **`RobotArm(can, params)`**（可与底盘**共用同一** `CanInterface`）；**`RobotArm` 不拥有、不关闭** CAN。随后各轴 **`ArmJoint(motor, joint_params)`**：**initialize → 关限位 → 位置模式**，**不在构造时清零脉冲**（零点在反向 bump 末 **`set_zero_position`**）。参数类型定义在 **`arm_joint.hpp`**（`ArmJointParams`）与 **`robot_arm.hpp`**（`ScaraArmParams`）。  
 2. **`bump`**：速度模式 + 相电流判到位。**反向**：到位后清零。**正向**：记录 **`stop_fwd_`**。  
 3. **`set_limits`**：以 **`H`**（正向碰停脉冲）为标度，驱动限位脉冲为 **`[margin, H-margin]`**；**返回**单侧 span 裕量 **`(margin/H)·span_max`**。**`RobotArm::calibrate()`** 据此与各轴名义 **`span_max`** 写入公有成员 **`reachable_span_min_*` / `reachable_span_max_*`**。  
 4. **`calibrate()`**：整臂标定流程（**先 Z 碰停与限位**，再 **J2 / J1** 等；细节以 `robot_arm.cpp` 为准）；**`test2` 不会自动调用**，仅在终端输入 **`calibrate`** 时执行。

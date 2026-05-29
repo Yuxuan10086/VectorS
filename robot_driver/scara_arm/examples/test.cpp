@@ -993,12 +993,15 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
       *can_if, uj1, static_cast<std::uint16_t>(j1_stall));
     m2 = std::make_unique<robot_driver::Pd42Motor>(
       *can_if, uj2, static_cast<std::uint16_t>(j2_stall));
-    j1 = std::make_unique<scara_arm::ArmJoint>(
-      *m1, margin, span_joint1, clamp_u16(ps_j1), clamp_u8(pa_j1),
-      static_cast<std::uint16_t>(j1_stall), clamp_u16(bump_j1), "J1");
-    j2 = std::make_unique<scara_arm::ArmJoint>(
-      *m2, margin, span_joint2, clamp_u16(ps_j2), clamp_u8(pa_j2),
-      static_cast<std::uint16_t>(j2_stall), clamp_u16(bump_j2), "J2");
+    const auto margin_units = static_cast<std::int32_t>(margin);
+    const scara_arm::ArmJointParams j1_params{
+      uj1, margin_units, span_joint1, clamp_u16(ps_j1), clamp_u8(pa_j1),
+      clamp_u16(j1_stall), clamp_u16(bump_j1), "J1"};
+    const scara_arm::ArmJointParams j2_params{
+      uj2, margin_units, span_joint2, clamp_u16(ps_j2), clamp_u8(pa_j2),
+      clamp_u16(j2_stall), clamp_u16(bump_j2), "J2"};
+    j1 = std::make_unique<scara_arm::ArmJoint>(*m1, j1_params);
+    j2 = std::make_unique<scara_arm::ArmJoint>(*m2, j2_params);
   } catch (const std::exception & e) {
     std::cerr << e.what() << '\n';
     return 1;

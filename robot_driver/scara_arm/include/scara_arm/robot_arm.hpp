@@ -17,30 +17,29 @@ class Pd42Motor;
 namespace scara_arm
 {
 
+/** 整臂参数：三轴关节包 + 标定碰停扭矩（由调用方从 ROS 参数填入） */
+struct ScaraArmParams
+{
+  ArmJointParams z;
+  ArmJointParams j1;
+  ArmJointParams j2;
+  std::uint16_t torque_z_up_ma{};
+  std::uint16_t torque_z_down_ma{};
+  std::uint16_t torque_j1_ma{};
+  std::uint16_t torque_j2_ma{};
+};
+
 class RobotArm
 {
 public:
-  // 须已 open 的共享 Can（可与底盘共用）；id_z / id_j1 / id_j2 均须非 0
-  RobotArm(
-    robot_driver::CanInterface & can,
-    std::uint8_t id_z, std::uint8_t id_j1, std::uint8_t id_j2,
-    std::int32_t margin_units,
-    double span_z, double span_joint1, double span_joint2,
-    std::uint16_t torque_z_up_ma, std::uint16_t torque_z_down_ma,
-    std::uint16_t torque_j1_ma, std::uint16_t torque_j2_ma,
-    std::uint16_t stall_current_z_ma, std::uint16_t stall_current_j1_ma,
-    std::uint16_t stall_current_j2_ma,
-    std::uint16_t position_speed_rpm_z, std::uint16_t position_speed_rpm_j1,
-    std::uint16_t position_speed_rpm_j2,
-    std::uint8_t position_accel_z, std::uint8_t position_accel_j1,
-    std::uint8_t position_accel_j2,
-    std::uint16_t bump_speed_rpm_z, std::uint16_t bump_speed_rpm_j1,
-    std::uint16_t bump_speed_rpm_j2);
+  RobotArm(robot_driver::CanInterface & can, ScaraArmParams params);
 
   ~RobotArm();
 
   RobotArm(const RobotArm &) = delete;
   RobotArm & operator=(const RobotArm &) = delete;
+
+  const ScaraArmParams & params() const { return params_; }
 
   // Z 碰停与限位 → J2 碰停与限位 → J2 半行程 → J1 碰停与限位（细节见 robot_arm.cpp）
   bool calibrate();
@@ -62,6 +61,7 @@ public:
 
 private:
   robot_driver::CanInterface & can_;
+  ScaraArmParams params_;
   std::unique_ptr<robot_driver::Pd42Motor> mz_;
   std::unique_ptr<robot_driver::Pd42Motor> m1_;
   std::unique_ptr<robot_driver::Pd42Motor> m2_;

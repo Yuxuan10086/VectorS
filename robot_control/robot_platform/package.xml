@@ -8,10 +8,16 @@
   <license>TODO</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+
   <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>action_msgs</depend>
   <depend>motor</depend>
   <depend>chassis</depend>
   <depend>scara_arm</depend>
+  <depend>robot_interfaces</depend>
 
   <exec_depend>ros2launch</exec_depend>
   <exec_depend>ament_index_python</exec_depend>

@@ -28,32 +28,29 @@ std::string joint_fail_msg(
 }
 }  // namespace
 
-ArmJoint::ArmJoint(
-  robot_driver::Pd42Motor & motor, std::int32_t margin_units, double span_max,
-  std::uint16_t abs_speed_rpm, std::uint8_t abs_accel, std::uint16_t nominal_stall_ma,
-  std::uint16_t bump_speed_rpm, const char * joint_tag)
-: joint_tag_(joint_tag),
+ArmJoint::ArmJoint(robot_driver::Pd42Motor & motor, const ArmJointParams & params)
+: joint_tag_(params.joint_tag),
   motor_(motor),
-  margin_(margin_units),
-  nominal_stall_ma_(nominal_stall_ma),
-  bump_speed_rpm_(bump_speed_rpm),
-  abs_speed_rpm_(abs_speed_rpm),
-  abs_accel_(abs_accel),
-  span_max_(span_max),
+  margin_(params.limit_margin_units),
+  nominal_stall_ma_(params.stall_current_ma),
+  bump_speed_rpm_(params.bump_speed_rpm),
+  abs_speed_rpm_(params.position_speed_rpm),
+  abs_accel_(params.position_accel),
+  span_max_(params.span_max),
   span_now_(0.0)
 {
   if (!motor_.initialize()) {
-    throw std::runtime_error(joint_fail_msg(joint_tag, "initialize", motor_));
+    throw std::runtime_error(joint_fail_msg(joint_tag_, "initialize", motor_));
   }
   if (!motor_.set_limit_sw(false)) {
-    throw std::runtime_error(joint_fail_msg(joint_tag, "set_limit_sw(false)", motor_));
+    throw std::runtime_error(joint_fail_msg(joint_tag_, "set_limit_sw(false)", motor_));
   }
   if (!motor_.set_mode(robot_driver::Pd42CommMode::kPosition)) {
-    throw std::runtime_error(joint_fail_msg(joint_tag, "set_mode(position)", motor_));
+    throw std::runtime_error(joint_fail_msg(joint_tag_, "set_mode(position)", motor_));
   }
   // initialize/set_mode 后可能清 RAM，再下发名义堵转电流
   if (!motor_.enable_stall_protection(nominal_stall_ma_)) {
-    throw std::runtime_error(joint_fail_msg(joint_tag, "enable_stall_protection(nominal)", motor_));
+    throw std::runtime_error(joint_fail_msg(joint_tag_, "enable_stall_protection(nominal)", motor_));
   }
 }
 

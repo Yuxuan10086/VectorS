@@ -1,0 +1,7 @@
+# 原地转向（仅 kMove 模式有效）
+float64 angle_rad    # 目标旋转角度（弧度），符号决定方向
+float64 omega_radps  # 角速度（弧度/秒）
+---
+bool success
+---
+float64 angle_remaining_rad   # 剩余命令角度（弧度，与 Goal 同单位）

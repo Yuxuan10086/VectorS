@@ -9,6 +9,8 @@ def generate_launch_description():
         get_package_share_directory('chassis'), 'config', 'chassis.yaml')
     arm_yaml = os.path.join(
         get_package_share_directory('scara_arm'), 'config', 'scara_arm.yaml')
+    topics_yaml = os.path.join(
+        get_package_share_directory('robot_platform'), 'config', 'platform_topics.yaml')
 
     return LaunchDescription([
         Node(
@@ -16,6 +18,6 @@ def generate_launch_description():
             executable='platform_node',
             name='robot_platform',
             output='screen',
-            parameters=[chassis_yaml, arm_yaml],
+            parameters=[chassis_yaml, arm_yaml, topics_yaml],
         ),
     ])
