@@ -30,7 +30,6 @@ public:
   void close();
   bool is_open() const { return open_; }
 
-  robot_driver::CanInterface & can();
   chassis::DiffDriveChassis & chassis();
   scara_arm::RobotArm & arm();
 
@@ -38,7 +37,6 @@ public:
   // reset_imu_zero() 将 offset 设为当前原始偏航角，使当前朝向成为 map 系的 yaw=0
   void update_imu_yaw(double raw_yaw);
   void reset_imu_zero();
-  double get_imu_yaw_offset() const;
   double get_corrected_imu_yaw() const;
 
 private:

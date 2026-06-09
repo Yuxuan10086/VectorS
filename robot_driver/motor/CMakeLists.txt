@@ -22,13 +22,10 @@ target_include_directories(robot_driver_pd42 PUBLIC
 target_compile_features(robot_driver_pd42 PUBLIC cxx_std_17)
 target_link_libraries(robot_driver_pd42 PUBLIC Threads::Threads)
 
-add_executable(pd42_cycle_example example/test.cpp)
-target_link_libraries(pd42_cycle_example PRIVATE robot_driver_pd42)
+add_executable(pd42_motor_repl example/pd42_motor_repl.cpp)
+target_link_libraries(pd42_motor_repl PRIVATE robot_driver_pd42)
 
-add_executable(pd42_test2 example/test2.cpp)
-target_link_libraries(pd42_test2 PRIVATE robot_driver_pd42)
-
-install(TARGETS pd42_cycle_example pd42_test2
+install(TARGETS pd42_motor_repl
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 

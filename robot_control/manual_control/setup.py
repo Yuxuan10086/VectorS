@@ -19,11 +19,10 @@ setup(
     zip_safe=True,
     maintainer='yuxuan',
     maintainer_email='yuxuan@todo.todo',
-    description='Web-based manual control panel (FastAPI + WebSocket) for chassis and SCARA arm, plus legacy keyboard node.',
+    description='Web-based manual control panel (FastAPI + WebSocket) for chassis and SCARA arm.',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'manual_control_node = manual_control.manual_control_node:main',
             'web_control_panel = manual_control.web_control_panel:main',
         ],
     },

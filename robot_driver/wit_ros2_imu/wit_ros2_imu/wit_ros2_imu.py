@@ -9,11 +9,9 @@ from rclpy.node import Node
 from sensor_msgs.msg import Imu
 
 key = 0
-flag = 0
 buff = {}
 angularVelocity = [0, 0, 0]
 acceleration = [0, 0, 0]
-magnetometer = [0, 0, 0]
 angle_degree = [0, 0, 0]
 
 
@@ -27,7 +25,7 @@ def check_sum(list_data, check_data):
 
 
 def handle_serial_data(raw_data):
-    global buff, key, angle_degree, magnetometer, acceleration, angularVelocity, pub_flag
+    global buff, key, angle_degree, acceleration, angularVelocity
     angle_flag = False
     buff[key] = raw_data
 
@@ -60,11 +58,6 @@ def handle_serial_data(raw_data):
                 angle_flag = True
             else:
                 print('0x53 Check failure')
-        elif buff[1] == 0x54:
-            if check_sum(data_buff[0:10], data_buff[10]):
-                magnetometer = hex_to_short(data_buff[2:10])
-            else:
-                print('0x54 Check failure')
         else:
             buff = {}
             key = 0
@@ -72,37 +65,6 @@ def handle_serial_data(raw_data):
         buff = {}
         key = 0
         return angle_flag
-        # if angle_flag:
-        #     stamp = rospy.get_rostime()
-        #
-        #     imu_msg.header.stamp = stamp
-        #     imu_msg.header.frame_id = "base_link"
-        #
-        #     mag_msg.header.stamp = stamp
-        #     mag_msg.header.frame_id = "base_link"
-        #
-        #     angle_radian = [angle_degree[i] * math.pi / 180 for i in range(3)]
-        #     qua = quaternion_from_euler(angle_radian[0], angle_radian[1], angle_radian[2])
-        #
-        #     imu_msg.orientation.x = qua[0]
-        #     imu_msg.orientation.y = qua[1]
-        #     imu_msg.orientation.z = qua[2]
-        #     imu_msg.orientation.w = qua[3]
-        #
-        #     imu_msg.angular_velocity.x = angularVelocity[0]
-        #     imu_msg.angular_velocity.y = angularVelocity[1]
-        #     imu_msg.angular_velocity.z = angularVelocity[2]
-        #
-        #     imu_msg.linear_acceleration.x = acceleration[0]
-        #     imu_msg.linear_acceleration.y = acceleration[1]
-        #     imu_msg.linear_acceleration.z = acceleration[2]
-        #
-        #     mag_msg.magnetic_field.x = magnetometer[0]
-        #     mag_msg.magnetic_field.y = magnetometer[1]
-        #     mag_msg.magnetic_field.z = magnetometer[2]
-        #
-        #     imu_pub.publish(imu_msg)
-        #     mag_pub.publish(mag_msg)
 
 
 def get_quaternion_from_euler(roll, pitch, yaw):
@@ -207,26 +169,6 @@ class IMUDriverNode(Node):
 
         # 发布IMU消息
         self.imu_pub.publish(self.imu_msg)
-
-    def compute_orientation(self, wx, wy, wz, ax, ay, az, dt):
-        # 计算旋转矩阵
-        Rx = np.array([[1, 0, 0],
-                       [0, math.cos(ax), -math.sin(ax)],
-                       [0, math.sin(ax), math.cos(ax)]])
-        Ry = np.array([[math.cos(ay), 0, math.sin(ay)],
-                       [0, 1, 0],
-                       [-math.sin(ay), 0, math.cos(ay)]])
-        Rz = np.array([[math.cos(wz), -math.sin(wz), 0],
-                       [math.sin(wz), math.cos(wz), 0],
-                       [0, 0, 1]])
-        R = Rz.dot(Ry).dot(Rx)
-
-        # 计算欧拉角
-        roll = math.atan2(R[2][1], R[2][2])
-        pitch = math.atan2(-R[2][0], math.sqrt(R[2][1] ** 2 + R[2][2] ** 2))
-        yaw = math.atan2(R[1][0], R[0][0])
-
-        return roll, pitch, yaw
 
 
 def main(args=None):

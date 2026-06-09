@@ -81,7 +81,6 @@ public:
    */
   void update_imu_yaw(double yaw);
 
-  robot_driver::CanInterface & can() { return can_; }
   const DiffDriveParams & params() const { return params_; }
   DriveMode mode() const { return mode_; }
 

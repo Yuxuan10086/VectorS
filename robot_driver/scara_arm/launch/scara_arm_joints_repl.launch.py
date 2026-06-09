@@ -1,4 +1,4 @@
-# 启动 test；无 TTY 时无法键盘输入，交互请：ros2 run scara_arm test --ros-args --params-file ...
+# 启动 scara_arm_joints_repl；无 TTY 时无法键盘输入，交互请：ros2 run scara_arm scara_arm_joints_repl --ros-args --params-file ...
 # 参数：params_file > 环境变量 SCARA_ARM_PARAMS_FILE > install/share/scara_arm/config/scara_arm.yaml
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -28,8 +28,8 @@ def _launch_setup(context, *_args, **_kwargs):
     return [
         Node(
             package='scara_arm',
-            executable='test',
-            name='scara_arm_test',
+            executable='scara_arm_joints_repl',
+            name='scara_arm_joints_repl',
             output='screen',
             parameters=[cfg],
         ),

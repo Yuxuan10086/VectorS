@@ -22,20 +22,10 @@ target_link_libraries(${PROJECT_NAME} PUBLIC motor::robot_driver_pd42)
 
 find_package(rclcpp REQUIRED)
 
-add_executable(scara_arm_test_node examples/test.cpp)
-set_target_properties(scara_arm_test_node PROPERTIES OUTPUT_NAME test)
-target_include_directories(scara_arm_test_node PRIVATE
+add_executable(scara_arm_joints_repl examples/scara_arm_joints_repl.cpp)
+target_include_directories(scara_arm_joints_repl PRIVATE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-target_link_libraries(scara_arm_test_node PRIVATE
-  rclcpp::rclcpp
-  ${PROJECT_NAME}
-)
-
-add_executable(scara_arm_test2_node examples/test2.cpp)
-set_target_properties(scara_arm_test2_node PROPERTIES OUTPUT_NAME test2)
-target_include_directories(scara_arm_test2_node PRIVATE
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-target_link_libraries(scara_arm_test2_node PRIVATE
+target_link_libraries(scara_arm_joints_repl PRIVATE
   rclcpp::rclcpp
   ${PROJECT_NAME}
 )
@@ -45,7 +35,7 @@ install(TARGETS ${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
 )
-install(TARGETS scara_arm_test_node scara_arm_test2_node
+install(TARGETS scara_arm_joints_repl
   DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY config launch

@@ -6,8 +6,9 @@
 
 | 可执行名 | 源码 | 作用 |
 |---------|------|------|
-| **`test`** | `examples/test.cpp` | 读 ROS 参数后构造 **J1/J2** 关节与电机；**不上电自动标定**；终端支持 **关节命令**（`j1` / `j2`）与 **直连电机**（`motor_j1_id` / `motor_j2_id`）。**不含 Z 轴与 `RobotArm`**。 |
-| **`test2`** | `examples/test2.cpp` | 本进程内 **`CanInterface` + open**，再构造 **`RobotArm`（Z + J1 + J2）`**；整臂与底盘合用时请在外部共用一个 **`CanInterface`** 并传入 **`RobotArm`**。终端：**`calibrate`**、**`ranges`**、**`move z j1 j2`**、**`help`**、**`q`**。 |
+| **`scara_arm_joints_repl`** | `examples/scara_arm_joints_repl.cpp` | 读 ROS 参数后构造 **J1/J2** 关节与电机；**不上电自动标定**；终端支持 **关节命令**（`j1` / `j2`）与 **直连电机**（`motor_j1_id` / `motor_j2_id`）。**不含 Z 轴与 `RobotArm`**，用于单轴/双轴调试。 |
+
+整臂标定与运动请使用 **`robot_platform`**（`Platform` + ROS Action/Service）。
 
 **`colcon build`** 后提供静态库 **`scara_arm::scara_arm`**（`ArmJoint` / `RobotArm`），供 **`robot_platform`** 等包 `find_package(scara_arm)` 链接。
 
@@ -18,7 +19,7 @@
 1. **外部** 创建并 **`CanInterface::open()`** 后，用 **`ScaraArmParams`**（三轴各一 **`ArmJointParams`** + 标定扭矩）构造 **`RobotArm(can, params)`**（可与底盘**共用同一** `CanInterface`）；**`RobotArm` 不拥有、不关闭** CAN。随后各轴 **`ArmJoint(motor, joint_params)`**：**initialize → 关限位 → 位置模式**，**不在构造时清零脉冲**（零点在反向 bump 末 **`set_zero_position`**）。参数类型定义在 **`arm_joint.hpp`**（`ArmJointParams`）与 **`robot_arm.hpp`**（`ScaraArmParams`）。  
 2. **`bump`**：速度模式 + 相电流判到位。**反向**：到位后清零。**正向**：记录 **`stop_fwd_`**。  
 3. **`set_limits`**：以 **`H`**（正向碰停脉冲）为标度，驱动限位脉冲为 **`[margin, H-margin]`**；**返回**单侧 span 裕量 **`(margin/H)·span_max`**。**`RobotArm::calibrate()`** 据此与各轴名义 **`span_max`** 写入公有成员 **`reachable_span_min_*` / `reachable_span_max_*`**。  
-4. **`calibrate()`**：整臂标定流程（**先 Z 碰停与限位**，再 **J2 / J1** 等；细节以 `robot_arm.cpp` 为准）；**`test2` 不会自动调用**，仅在终端输入 **`calibrate`** 时执行。
+4. **`calibrate()`**：整臂标定流程（**先 Z 碰停与限位**，再 **J2 / J1** 等；细节以 `robot_arm.cpp` 为准）；由 **`robot_platform`** 的 `/arm/calibrate` Action 触发。
 
 ## 依赖
 
@@ -40,44 +41,35 @@ source install/setup.bash
 
 - **推荐**：启动前指定源码 YAML（绝对路径或相对于当前 shell `cwd` 的路径）：
   ```bash
-  ros2 run scara_arm test --ros-args --params-file ~/robot_ws/src/robot_driver/scara_arm/config/scara_arm.yaml
-  ros2 run scara_arm test2 --ros-args --params-file ~/robot_ws/src/robot_driver/scara_arm/config/scara_arm.yaml
+  ros2 run scara_arm scara_arm_joints_repl --ros-args --params-file ~/robot_ws/src/robot_driver/scara_arm/config/scara_arm.yaml
   ```
-- **环境变量**（便于 launch）：若设置 **`SCARA_ARM_PARAMS_FILE`** 为上述 YAML 的绝对路径，则 **`ros2 launch scara_arm test.launch.py`** 会优先加载该文件（launch 内解析顺序见 `launch/test.launch.py`）。
+- **环境变量**（便于 launch）：若设置 **`SCARA_ARM_PARAMS_FILE`** 为上述 YAML 的绝对路径，则 **`ros2 launch scara_arm scara_arm_joints_repl.launch.py`** 会优先加载该文件（launch 内解析顺序见 `launch/scara_arm_joints_repl.launch.py`）。
 - **Launch 参数**：`params_file:=/path/to/scara_arm.yaml` 优先级最高。
 - 若仍希望继续用 **`$(ros2 pkg prefix scara_arm)/share/...`**，则在每次改 YAML 后执行 **`colcon build --packages-select scara_arm`**（无需清编译，仅刷新 install 文件）。
 
 | 参数 | 含义 |
 |------|------|
-| `motor_*_id` | Z / 关节1 / 关节2 从机地址（**均须非 0**）；**`test`** 仅使用 `motor_j1_id` / `motor_j2_id`，**`test2`** 使用三者。 |
+| `motor_*_id` | Z / 关节1 / 关节2 从机地址（**均须非 0**）；**`scara_arm_joints_repl`** 仅使用 `motor_j1_id` / `motor_j2_id`。 |
 | `torque_z_up_ma` / `torque_z_down_ma` | Z 标定 **`bump(0)` / `bump(1)`** 相电流阈值（mA）；常见对应上升 / 下降，与丝杆方向一致时请按实机核对 |
-| `torque_j1_ma` / `torque_j2_ma` | J1/J2 碰停 **相电流到位阈值**（mA，0~3000）；**`RobotArm::calibrate()`** 与 **`test`** 的 bump 使用 |
+| `torque_j1_ma` / `torque_j2_ma` | J1/J2 碰停 **相电流到位阈值**（mA，0~3000）；**`RobotArm::calibrate()`** 与 **`scara_arm_joints_repl`** 的 bump 使用 |
 | `stall_current_*_ma` | 各轴 **常态** 堵转保护电流（mA，0~3000）；**`Pd42Motor` 构造**等 |
 | `bump_speed_rpm_*` | 碰停标定 **`set_speed`** 目标转速（rpm）；加速度档复用 **`position_accel_*`** |
 | `position_speed_rpm_*` | 各关节 **`set_absolute_position`** 目标转速（rpm） |
 | `position_accel_*` | **`set_absolute_position`** / 碰停 **`set_speed`** 加速度档（0~255） |
 | `limit_margin_units` | 固件行程 **下限侧脉冲**（与正向碰停点上沿构成区间）；标定前请保证 **反向 bump 先执行并已清零** |
-| `span_joint1` / `span_joint2` / `span_z` | 各轴逻辑行程上限（用户单位自定）；**`test2`** 需三者齐全 |
+| `span_joint1` / `span_joint2` / `span_z` | 各轴逻辑行程上限（用户单位自定） |
 | （碰停轮询） | 相电流采样周期与寻边超时见 **`arm_joint.hpp`** 中 **`kBumpStallPollPeriodMs`**、**`kBumpStallSeekTimeoutS`**，不由 YAML 配置 |
 
 ## 运行
 
 **必须用 `ros2 run` 直连终端**：`ros2 launch` 启动的子进程 **stdin 通常不是 TTY**，读不到键盘输入，交互命令不会执行。
 
-### `test`：J1/J2 关节 + 直连电机
+### `scara_arm_joints_repl`：J1/J2 关节 + 直连电机
 
 首词为 **`j1` / `j2`** 接 `bump()`、`move(span)` 等；或以 **`motor_j1_id` / `motor_j2_id`** 为行首直连电机命令。参数表见上（**不要求** `motor_z_id` 等 Z 轴键，但可与完整 YAML 共存，未用键可保留）。
 
 ```bash
-ros2 run scara_arm test --ros-args --params-file ~/robot_ws/src/robot_control/scara_arm/config/scara_arm.yaml
-```
-
-### `test2`：整臂 `RobotArm`，`calibrate` / `ranges` / `move` / `help` / `q`
-
-需 **`scara_arm.yaml` 中 RobotArm 所需的全部参数**（含 Z 轴与三电机 ID）。启动后输入 **`calibrate`** 才会走 **`RobotArm::calibrate()`**；标定成功后会打印三轴 **`reachable_span_*`**；**`move`** 须在三轴可达 span 内（见 `RobotArm::set_position`）。
-
-```bash
-ros2 run scara_arm test2 --ros-args --params-file ~/robot_ws/src/robot_control/scara_arm/config/scara_arm.yaml
+ros2 run scara_arm scara_arm_joints_repl --ros-args --params-file ~/robot_ws/src/robot_driver/scara_arm/config/scara_arm.yaml
 ```
 
 ### 仅想加载 YAML、不依赖本机键盘时
@@ -85,7 +77,7 @@ ros2 run scara_arm test2 --ros-args --params-file ~/robot_ws/src/robot_control/s
 可用 launch（若节点在无 TTY 下会打印说明并退出，属预期行为）：
 
 ```bash
-ros2 launch scara_arm test.launch.py
+ros2 launch scara_arm scara_arm_joints_repl.launch.py
 ```
 
 **安全提示**：碰停前确认行程内无障碍物与人；电流请从小到大试。

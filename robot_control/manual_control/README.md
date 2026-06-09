@@ -1,13 +1,10 @@
 # manual_control
 
-`robot_control` 子包，提供**两种手动控制方式**（可并存）：
+`robot_control` 子包，提供**网页控制面板**：基于 FastAPI + WebSocket 的浏览器 UI，支持虚拟摇杆、滑块、模式切换、阻塞移动 Action 进度反馈和急停。
 
-- **网页控制面板**（推荐）：基于 FastAPI + WebSocket 的现代化浏览器 UI，支持虚拟摇杆、滑块、模式切换、阻塞移动 Action 进度反馈和急停。
-- **键盘节点**（保留）：原有终端键盘控制（方向键 + WASD）。
+发布与 `robot_platform` 兼容的话题和服务。
 
-两者均发布与 `robot_platform` 兼容的话题和服务。
-
-## 推荐：网页控制面板
+## 网页控制面板
 
 ### 启动命令
 
@@ -69,19 +66,7 @@ ros2 launch manual_control web_panel.launch.py \
 
 > 提示：使用前请确保 `robot_platform` 已经成功启动并完成初始化。
 
-## 原键盘节点（保留）
-
-仍可使用原有键盘控制（适合无显示器场景）：
-
-```bash
-ros2 run manual_control manual_control_node
-# 或
-ros2 launch manual_control manual_control.launch.py
-```
-
-> 注意：必须在**真实终端**（TTY）中运行，stdin 需为交互式。
-
-## 话题与接口（两者共用）
+## 话题与接口
 
 - 发布 `/chassis/cmd_vel` (`geometry_msgs/msg/Twist`)
 - 发布 `/arm/joint_command` (`sensor_msgs/msg/JointState`)
@@ -108,14 +93,3 @@ pip install "fastapi>=0.110" "uvicorn[standard]>=0.30"
 - 启动时报 “librobot_platform__rosidl_typesupport_*.so 找不到” 或 “Type support not from this implementation”：**必须同时构建** `robot_platform` 和 `manual_control`（见上方启动命令）。单独 `colcon build --packages-select manual_control` 是不够的。
 - 控制无反应：检查 `robot_platform` 是否运行，模式是否正确（MOVE 模式下 Twist 可能受限）。
 - Action 一直 rejected：先通过面板或命令切换到 MOVE 模式。
-- 想同时用键盘和网页：两个节点可同时运行（注意不要同时激烈操作同一自由度）。
-
----
-
-原键盘说明（简要）保留供参考：
-
-- 机械臂：方向键控制 z/j1，`,` `.` 控制 j2
-- 底盘：WASD 速度控制，松键超时归零
-- 话题与上面一致
-
-完整键盘参数见源码 `manual_control_node.py`。

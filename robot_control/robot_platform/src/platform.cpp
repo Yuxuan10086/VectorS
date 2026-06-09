@@ -267,11 +267,6 @@ void Platform::close()
   open_ = false;
 }
 
-robot_driver::CanInterface & Platform::can()
-{
-  return can_;
-}
-
 chassis::DiffDriveChassis & Platform::chassis()
 {
   if (!chassis_) {
@@ -300,11 +295,6 @@ void Platform::reset_imu_zero()
 {
   imu_yaw_offset_ = current_imu_yaw_raw_.load(std::memory_order_relaxed);
   RCLCPP_INFO(node_.get_logger(), "IMU 零点已重置，offset = %.6f rad", imu_yaw_offset_);
-}
-
-double Platform::get_imu_yaw_offset() const
-{
-  return imu_yaw_offset_;
 }
 
 double Platform::get_corrected_imu_yaw() const

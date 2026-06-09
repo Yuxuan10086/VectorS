@@ -764,7 +764,7 @@ int interactive_session(
     std::cerr
       << "\n错误：stdin 不是终端（常见于 ros2 launch：子进程拿不到键盘输入）。\n"
       << "请在本机终端直接运行，例如：\n"
-      << "  ros2 run scara_arm test --ros-args --params-file <path/to/scara_arm.yaml>\n\n";
+      << "  ros2 run scara_arm scara_arm_joints_repl --ros-args --params-file <path/to/scara_arm.yaml>\n\n";
     return 0;
   }
 
@@ -914,7 +914,7 @@ int run(const std::shared_ptr<rclcpp::Node> & node)
     std::cerr
       << "缺少 ROS 参数 \"" << missing
       << "\"；本示例仅需 J1/J2 相关键（见源码 kRequiredParams）。\n"
-      << "例如: ros2 run scara_arm test --ros-args --params-file <path/to/scara_arm.yaml>\n";
+      << "例如: ros2 run scara_arm scara_arm_joints_repl --ros-args --params-file <path/to/scara_arm.yaml>\n";
     return 2;
   }
 

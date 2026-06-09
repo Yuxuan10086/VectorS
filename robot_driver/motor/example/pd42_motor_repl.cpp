@@ -1,5 +1,5 @@
 // 交互式调用 Pd42Motor；命令为单词形式，例如 init() / speed(200) / rpm()
-// 用法: pd42_cycle_example [电机ID]（CAN 网卡名见 can_interface.cpp 内常量）
+// 用法: pd42_motor_repl [电机ID]（CAN 网卡名见 can_interface.cpp 内常量）
 #include "robot_driver/can_interface.hpp"
 #include "robot_driver/pd42_motor.hpp"
 #include "robot_driver/pd42_protocol.hpp"
