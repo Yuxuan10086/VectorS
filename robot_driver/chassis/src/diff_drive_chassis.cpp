@@ -31,8 +31,8 @@ constexpr double kRotateAngleTol     = 0.0087;    // 到位容差 (rad, ≈0.5°
 DiffDriveChassis::DiffDriveChassis(robot_driver::CanInterface & can, DiffDriveParams params)
 : can_(can),
   params_(params),
-  left_motor_(can, params.left_id),
-  right_motor_(can, params.right_id)
+  left_motor_(can, params.left_id, robot_driver::Pd42Motor::kDisableStallProtection),
+  right_motor_(can, params.right_id, robot_driver::Pd42Motor::kDisableStallProtection)
 {
 }
 
@@ -102,7 +102,7 @@ bool DiffDriveChassis::set_twist(double linear_x, double omega)
 
 bool DiffDriveChassis::set_mode(DriveMode mode)
 {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::unique_lock<std::mutex> lock(mutex_);
 
   if (mode == mode_) {
     return true;
@@ -132,7 +132,7 @@ bool DiffDriveChassis::set_mode(DriveMode mode)
     last_cmd_time_ = std::chrono::steady_clock::now();
   }
 
-  // 根据目标模式启停看门狗
+  // 根据目标模式启停看门狗（注意：join 必须在不持有 mutex 的情况下进行，否则会与 watchdog_loop 死锁）
   if (mode == DriveMode::kTwist) {
     if (!watchdog_running_) {
       shutdown_ = false;
@@ -140,8 +140,21 @@ bool DiffDriveChassis::set_mode(DriveMode mode)
       watchdog_running_ = true;
     }
   } else {
-    // 切换到 move 模式，关闭看门狗
-    shutdown_watchdog();
+    // 切换到 move 模式，安全关闭看门狗（先把线程对象移出，再释放锁，最后 join）
+    std::thread thread_to_join;
+    if (watchdog_running_ && watchdog_thread_.joinable()) {
+      shutdown_.store(true, std::memory_order_relaxed);
+      thread_to_join = std::move(watchdog_thread_);
+      watchdog_running_ = false;
+    }
+
+    lock.unlock();
+
+    if (thread_to_join.joinable()) {
+      thread_to_join.join();
+    }
+
+    lock.lock();
   }
 
   mode_ = mode;
@@ -176,16 +189,39 @@ void DiffDriveChassis::watchdog_loop()
 
 void DiffDriveChassis::shutdown_watchdog()
 {
-  shutdown_.store(true, std::memory_order_relaxed);
-  if (watchdog_running_ && watchdog_thread_.joinable()) {
-    watchdog_thread_.join();
-    watchdog_running_ = false;
+  // 安全版本：短暂持有锁取出线程对象，然后在无锁情况下 join，避免与 watchdog_loop 死锁
+  std::thread thread_to_join;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    shutdown_.store(true, std::memory_order_relaxed);
+    if (watchdog_running_ && watchdog_thread_.joinable()) {
+      thread_to_join = std::move(watchdog_thread_);
+      watchdog_running_ = false;
+    }
+  }
+  if (thread_to_join.joinable()) {
+    thread_to_join.join();
   }
 }
 
 void DiffDriveChassis::update_imu_yaw(double yaw)
 {
   current_yaw_.store(yaw, std::memory_order_relaxed);
+}
+
+void DiffDriveChassis::cancel_motion()
+{
+  abort_requested_.store(true, std::memory_order_release);
+  if (!motors_ready_) {
+    return;
+  }
+  (void)apply_wheel(left_motor_, 0.0, kLeftForwardRequiresReverse);
+  (void)apply_wheel(right_motor_, 0.0, kRightForwardRequiresReverse);
+}
+
+bool DiffDriveChassis::motion_aborted() const
+{
+  return motion_aborted_.exchange(false, std::memory_order_acq_rel);
 }
 
 // ===================== kMove 模式：move / span 实现 =====================
@@ -201,11 +237,23 @@ double pulses_per_meter(const DiffDriveParams & p)
   const double wheel_circum = M_PI * p.wheel_diameter_m;
   return p.encoder_pulses_per_rev / wheel_circum;
 }
+
+/** 0x2A 有车体坐标系下有符号位移（米）；符号与 kXForwardRequiresReverse 一致。 */
+double signed_travel_m(
+  std::int32_t left_start, std::int32_t right_start,
+  std::int32_t left_now, std::int32_t right_now, double ppm)
+{
+  const auto dl_raw = static_cast<std::int64_t>(left_now) - static_cast<std::int64_t>(left_start);
+  const auto dr_raw = static_cast<std::int64_t>(right_now) - static_cast<std::int64_t>(right_start);
+  const auto dl = kLeftForwardRequiresReverse ? -dl_raw : dl_raw;
+  const auto dr = kRightForwardRequiresReverse ? -dr_raw : dr_raw;
+  return static_cast<double>(dl + dr) * 0.5 / ppm;
+}
 } // anonymous
 
-bool DiffDriveChassis::move(double distance_m, double speed_mps)
+bool DiffDriveChassis::move(double distance_m, double speed_mps, MoveProgressCallback on_progress)
 {
-  if (mode_ != DriveMode::kMove || !motors_ready_ || distance_m <= 0.0 || speed_mps <= 0.0) {
+  if (mode_ != DriveMode::kMove || !motors_ready_ || std::abs(distance_m) < 1e-6 || speed_mps <= 0.0) {
     return false;
   }
 
@@ -214,34 +262,71 @@ bool DiffDriveChassis::move(double distance_m, double speed_mps)
     return false;   // 缺少编码器参数，无法换算
   }
 
-  // 1. 初始化：当前左右轮基准（连续累积距离）
-  const auto left_start  = left_motor_.pos().value_or(0);
-  const auto right_start = right_motor_.pos().value_or(0);
+  const double dir = (distance_m > 0.0) ? 1.0 : -1.0;
+  const double target_m = std::abs(distance_m);
+
+  abort_requested_.store(false, std::memory_order_release);
+  motion_aborted_.store(false, std::memory_order_release);
+
+  // 1. 初始化：记录有符号基准位置（0x2A，后退时读数减小、可为负）
+  const auto left_start_opt = left_motor_.pos();
+  const auto right_start_opt = right_motor_.pos();
+  if (!left_start_opt || !right_start_opt) {
+    return false;
+  }
+  const std::int32_t left_start = *left_start_opt;
+  const std::int32_t right_start = *right_start_opt;
 
   // 2. 锁死初始航向（使用此刻最新注入值）
   const double target_yaw = current_yaw_.load(std::memory_order_relaxed);
 
-  double traveled_m = 0.0;
-
   while (true) {
+    if (abort_requested_.load(std::memory_order_acquire)) {
+      motion_aborted_.store(true, std::memory_order_release);
+      (void)apply_wheel(left_motor_, 0.0, kLeftForwardRequiresReverse);
+      (void)apply_wheel(right_motor_, 0.0, kRightForwardRequiresReverse);
+      return false;
+    }
+
     // --- 数据采集 ---
-    const auto left_now  = left_motor_.pos().value_or(left_start);
-    const auto right_now = right_motor_.pos().value_or(right_start);
+    const auto left_now_opt = left_motor_.pos();
+    const auto right_now_opt = right_motor_.pos();
+    if (!left_now_opt || !right_now_opt) {
+      (void)apply_wheel(left_motor_, 0.0, kLeftForwardRequiresReverse);
+      (void)apply_wheel(right_motor_, 0.0, kRightForwardRequiresReverse);
+      if (abort_requested_.load(std::memory_order_acquire)) {
+        motion_aborted_.store(true, std::memory_order_release);
+        return false;
+      }
+      std::this_thread::sleep_for(kMoveLoopPeriod);
+      continue;
+    }
 
-    const double avg_pulses = (left_now - left_start + right_now - right_start) * 0.5;
-    traveled_m = avg_pulses / ppm;
+    // traveled_raw：车体前进为正、后退为负（左右轮 0x2A 已在 signed_travel_m 中对齐）
+    const double traveled_raw_m = signed_travel_m(
+      left_start, right_start, *left_now_opt, *right_now_opt, ppm)
+      * params_.odometry_correction_factor;
+    // progress：沿命令方向的已走距离，恒为非负直至到达 target
+    const double progress_m = dir * traveled_raw_m;
 
-    // --- 终止条件 ---
-    if (traveled_m >= distance_m) {
+    if (progress_m >= target_m) {
       break;
     }
 
-    // --- 基础前行速度（带减速） ---
-    const double remaining = distance_m - traveled_m;
-    double base_speed = speed_mps;
+    // --- 基础速度（带减速）；speed_mps 为速率幅值，dir 决定前进/后退 ---
+    const double remaining = target_m - progress_m;
+
+    if (on_progress) {
+      on_progress(MoveProgress{
+        remaining,
+        *left_now_opt,
+        *right_now_opt,
+      });
+    }
+    double base_speed = dir * speed_mps;
 
     if (remaining <= kStraightDecelDistance) {
-      base_speed = std::max(kStraightMinSpeed, kStraightDecelGain * remaining);
+      base_speed = dir * std::max(kStraightMinSpeed, kStraightDecelGain * remaining);
     }
 
     // --- 航向修正（完全依赖外部注入的 current_yaw_） ---
@@ -274,12 +359,22 @@ bool DiffDriveChassis::span(double angle_rad, double omega_radps)
     return false;
   }
 
+  abort_requested_.store(false, std::memory_order_release);
+  motion_aborted_.store(false, std::memory_order_release);
+
   // 1. 读取起始注入角度，计算最短旋转方向和目标
   const double start_yaw = current_yaw_.load(std::memory_order_relaxed);
   // 简单处理：用户传入的就是期望的相对旋转量（正=逆时针）
   const double target_yaw = start_yaw + angle_rad;
 
   while (true) {
+    if (abort_requested_.load(std::memory_order_acquire)) {
+      motion_aborted_.store(true, std::memory_order_release);
+      (void)apply_wheel(left_motor_, 0.0, kLeftForwardRequiresReverse);
+      (void)apply_wheel(right_motor_, 0.0, kRightForwardRequiresReverse);
+      return false;
+    }
+
     const double current_yaw = current_yaw_.load(std::memory_order_relaxed);
     double err = target_yaw - current_yaw;
 
@@ -319,6 +414,28 @@ bool DiffDriveChassis::span(double angle_rad, double omega_radps)
   (void)apply_wheel(right_motor_, 0.0, kRightForwardRequiresReverse);
 
   return true;
+}
+
+// ===================== 电机错误诊断（供上层 open() 失败时打印详细原因） =====================
+
+std::uint8_t DiffDriveChassis::left_motor_error_code() const
+{
+  return left_motor_.error_code();
+}
+
+std::string DiffDriveChassis::left_motor_error_hint() const
+{
+  return left_motor_.error_hint();
+}
+
+std::uint8_t DiffDriveChassis::right_motor_error_code() const
+{
+  return right_motor_.error_code();
+}
+
+std::string DiffDriveChassis::right_motor_error_hint() const
+{
+  return right_motor_.error_hint();
 }
 
 }  // namespace chassis

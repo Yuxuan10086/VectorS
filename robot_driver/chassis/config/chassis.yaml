@@ -5,4 +5,5 @@
     wheel_diameter_m: 0.08    # 驱动轮直径 (m)，用于线速度→RPM
     track_m: 0.45             # 左右轮中心距 (m)，差速解算用
     drive_accel: 50           # 速度模式加速度档位 (0–255)
-    encoder_pulses_per_rev: 512000  # 编码器每转脉冲数（电机直连车轮，无减速器）
+    encoder_pulses_per_rev: 52100  # 编码器每转脉冲数（与 pos() 0x2A 单位一致，电机直连车轮）
+    odometry_correction_factor: 1.2  # 实际里程/理论里程；move 到站判定用（编码器读数 × 系数）

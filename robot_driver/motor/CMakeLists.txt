@@ -6,6 +6,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ament_cmake REQUIRED)
 find_package(Threads REQUIRED)
@@ -18,6 +19,7 @@ target_include_directories(robot_driver_pd42 PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
+target_compile_features(robot_driver_pd42 PUBLIC cxx_std_17)
 target_link_libraries(robot_driver_pd42 PUBLIC Threads::Threads)
 
 add_executable(pd42_cycle_example example/test.cpp)

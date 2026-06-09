@@ -36,6 +36,12 @@ public:
   /** 将完整协议帧入队异步下发；发送线程负责分包与帧间 ≥2 ms。失败：未 open 或正在 close */
   bool send(const std::vector<uint8_t> & frame_bytes);
 
+  /** 请求-应答事务互斥（同一 CAN 口多线程不得并行 wait 应答） */
+  std::mutex & request_mutex() { return request_mutex_; }
+
+  /** 丢弃指定路由键上已排队但未取走的应答（发新指令前清陈旧帧） */
+  void drain_rx_route(uint32_t route_id);
+
 private:
   void rx_thread_loop();
   void send_thread_loop();
@@ -57,6 +63,7 @@ private:
   std::atomic<bool> run_rx_{false};
 
   std::mutex rx_mutex_;
+  std::mutex request_mutex_;
   std::unordered_map<uint32_t, std::vector<uint8_t>> asm_by_route_;
   std::unordered_map<uint32_t, std::deque<std::vector<uint8_t>>> rx_queue_by_route_;
 };

@@ -3,6 +3,7 @@
 #define SCARA_ARM__ROBOT_ARM_HPP_
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #include "robot_driver/can_interface.hpp"
@@ -42,7 +43,8 @@ public:
   const ScaraArmParams & params() const { return params_; }
 
   // Z 碰停与限位 → J2 碰停与限位 → J2 半行程 → J1 碰停与限位（细节见 robot_arm.cpp）
-  bool calibrate();
+  // 可选 on_axis_complete 回调：每当一个轴（"z"、"j2"、"j1"）标定成功后立即调用，用于 Action Feedback
+  bool calibrate(std::function<void(const std::string & axis)> on_axis_complete = nullptr);
 
   /** 三轴同时 set_position；整臂标定后 span 须在各类 reachable_span_* 内，否则 false */
   bool set_position(double span_z, double span_joint1, double span_joint2);
@@ -58,6 +60,10 @@ public:
   ArmJoint & joint_z() noexcept { return *jz_; }
   ArmJoint & joint1() noexcept { return *j1_; }
   ArmJoint & joint2() noexcept { return *j2_; }
+
+  robot_driver::Pd42Motor & motor_z() noexcept { return *mz_; }
+  robot_driver::Pd42Motor & motor_j1() noexcept { return *m1_; }
+  robot_driver::Pd42Motor & motor_j2() noexcept { return *m2_; }
 
 private:
   robot_driver::CanInterface & can_;

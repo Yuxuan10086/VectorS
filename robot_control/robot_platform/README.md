@@ -27,6 +27,15 @@ sudo ~/robot_ws/src/robot_driver/wit_ros2_imu/bind_usb.sh
 ros2 launch robot_bringup imu_platform_bringup.launch.py
 ```
 
+**带参数启动示例**（更多参数说明见 `robot_bringup/README.md`）：
+
+```bash
+# 开启机械臂自动标定 + 自定义 IMU 安装高度
+ros2 launch robot_bringup imu_platform_bringup.launch.py \
+    arm_auto_calibrate:=true \
+    imu_z:=0.15
+```
+
 单独只启动 platform（需手动启动 IMU 和 TF，可用于调试）：
 
 ```bash
@@ -35,7 +44,7 @@ ros2 launch robot_platform platform.launch.py
 
 **前提条件**：
 - IMU 硬件已正确插入，且 `bind_usb.sh` 已成功执行（或 udev 规则已生效）。
-- `chassis.yaml` 中 `encoder_pulses_per_rev: 512000` 已正确配置（电机直连车轮）。
+- `chassis.yaml` 中 `encoder_pulses_per_rev: 52100`（每圈脉冲，与 `pos()` 0x2A 单位一致，电机直连车轮）。
 
 `platform_node` 在硬件 `open()` 后订阅下列话题（默认值见 **`config/platform_topics.yaml`**，可用参数覆盖）：
 
@@ -43,7 +52,7 @@ ros2 launch robot_platform platform.launch.py
 |------|----------|------|------|
 | `chassis_cmd_vel_topic` | `/chassis/cmd_vel` | `geometry_msgs/msg/Twist` | `linear.x`、`angular.z` → `DiffDriveChassis::set_twist`；停止发布约 300ms 后底盘看门狗停车 |
 | `arm_joint_command_topic` | `/arm/joint_command` | `sensor_msgs/msg/JointState` | 解析三轴 `position` → `RobotArm::set_position`（须先标定，`reachable_span_*` 有效） |
-|| `imu_topic` | `/imu/data_raw` | `sensor_msgs/msg/Imu` | 把最新 Yaw（从 orientation 四元数提取）注入 `DiffDriveChassis::update_imu_yaw`，供 `kMove` 模式的 `move`/`span` 闭环使用 |
+|| `imu_topic` | `/imu/data_raw` | `sensor_msgs/msg/Imu` | 把最新 Yaw 注入 Platform（内部同时更新底盘 SDK + 维护 IMU 零点 offset）；启动后首次 IMU 到达会自动 reset_zero 使初始位姿与 map 重合 |
 
 **JointState 约定**：`name` 与 `arm_joint_names`（默认 `z` / `j1` / `j2`）逐项匹配取 `position`；若 `name` 为空且 `position` 至少 3 个，则按 `[z, j1, j2]` 顺序使用。
 
@@ -81,6 +90,8 @@ ros2 service call /chassis/set_mode robot_interfaces/srv/SetDriveMode "{mode: 0}
 
 **注意**：构造函数默认启动为 `kMove` 模式，`robot_platform` 启动后会立即切换到 `kTwist`（见 `platform.cpp`）。
 
+**启动自动标定已移除**：`arm_auto_calibrate` 参数及启动时自动调用已删除。请改用新的 **`/arm/calibrate` Action**（带实时进度 Feedback，每个轴完成都会推送消息，前端有按钮和三轴状态显示）。
+
 ## 底盘阻塞移动 Action
 
 当底盘处于 `kMove` 模式时，`platform_node` 提供两个 ROS Action 用于执行阻塞式移动命令（对应 `chassis::DiffDriveChassis` 的 `move` / `span`）：
@@ -108,7 +119,34 @@ ros2 action send_goal /chassis/move robot_interfaces/action/ChassisMove "{distan
 ros2 action send_goal /chassis/span robot_interfaces/action/ChassisSpan "{angle_rad: -1.57, omega_radps: 0.5}"
 ```
 
-**当前状态**：`move` / `span` 底层实现为 stub（始终返回 false），因此 Action 最终会以 success=false 结束。真实运动逻辑实现后，Action 才会真正执行并逐步更新 Feedback 中的剩余距离/角度。
+**当前状态**：`move` / `span` 已实现真实 20ms 周期控制闭环（依赖 IMU yaw 注入）。
+
+## IMU 零点重置服务与 map->base_link TF
+
+`platform_node` 额外提供：
+
+- **服务**：`/imu/reset_zero` （类型 `std_srvs/srv/Trigger`）
+
+  调用后立即把 Platform 内部的 `imu_yaw_offset` 设为**当前原始 IMU 偏航角**，使得此后发布的 `map->base_link` 的 yaw = 0（当前物理朝向成为 map 坐标系的正方向）。
+
+  位置（x,y）保持不变，仅重置航向参考。
+
+  ```bash
+  ros2 service call /imu/reset_zero std_srvs/srv/Trigger "{}"
+  ```
+
+- **TF 发布**：以 **7Hz** 持续广播 `map -> base_link` 变换
+
+  - 初始：首次收到 IMU 数据后自动 `reset_imu_zero()`，保证 `map->base_link` 初始为单位位姿（x=0,y=0,yaw=0），与 map 重合。
+  - 姿态：**始终** 由 `当前 IMU yaw - offset` 唯一确定（不受 move/span 历史影响，实时跟随 IMU）。
+  - 位置：仅当 `/chassis/move` 或 `/chassis/span` Action **成功返回** 时更新：
+    - move：按启动瞬间的 map yaw 方向，累加 `distance_m * (cos, sin)`
+    - span：仅改变朝向（位置不变，yaw 由后续 IMU 实时刷新）
+  - twist 模式下的自由遥控不会更新位置（无距离语义）。
+
+  可用 RViz 或 `ros2 run tf2_ros tf2_echo map base_link` 查看实时位姿。
+
+这样设计使得：用户可在任意时刻通过重置服务“告诉”系统“现在这个朝向就是 map 的 0 度”，之后所有 move/span 的位姿累加都在这个对齐后的 map 系下进行，同时 TF 始终输出最新 IMU 修正后的精确朝向。
 
 ## 在上层代码中使用
 

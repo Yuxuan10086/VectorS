@@ -11,9 +11,14 @@ find_package(action_msgs REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/MotorState.msg"
   "srv/SetDriveMode.srv"
+  "srv/GetMotorState.srv"
+  "srv/GetMotorSpeedLoopPid.srv"
+  "srv/SetMotorSpeedLoopPid.srv"
   "action/ChassisMove.action"
   "action/ChassisSpan.action"
+  "action/ArmCalibrate.action"
   DEPENDENCIES action_msgs builtin_interfaces
 )
 

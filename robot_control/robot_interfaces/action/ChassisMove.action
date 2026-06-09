@@ -1,7 +1,9 @@
 # 直线移动（仅 kMove 模式有效）
-float64 distance_m   # 目标移动距离（米），正值表示前进
-float64 speed_mps    # 线速度（米/秒），正值
+float64 distance_m   # 目标移动距离（米），正=前进，负=后退
+float64 speed_mps    # 线速度幅值（米/秒），正值
 ---
 bool success
 ---
 float64 distance_remaining_m   # 剩余命令距离（米，与 Goal 同单位）
+int32 left_encoder_pos         # 左轮 0x2A 实时位置（有符号脉冲）
+int32 right_encoder_pos        # 右轮 0x2A 实时位置（有符号脉冲）

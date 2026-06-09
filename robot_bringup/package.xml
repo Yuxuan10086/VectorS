@@ -3,7 +3,7 @@
 <package format="3">
   <name>robot_bringup</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>整机启动包（bringup）：提供 IMU + Platform 等一键启动 launch 文件</description>
   <maintainer email="yuxuan@todo.todo">yuxuan</maintainer>
   <license>TODO: License declaration</license>
 

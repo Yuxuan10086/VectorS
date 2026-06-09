@@ -1,6 +1,7 @@
 #ifndef ROBOT_PLATFORM__PLATFORM_HPP_
 #define ROBOT_PLATFORM__PLATFORM_HPP_
 
+#include <atomic>
 #include <memory>
 
 #include "chassis/diff_drive_chassis.hpp"
@@ -33,6 +34,13 @@ public:
   chassis::DiffDriveChassis & chassis();
   scara_arm::RobotArm & arm();
 
+  // IMU 零点 offset：用于 map->base_link 的航向修正
+  // reset_imu_zero() 将 offset 设为当前原始偏航角，使当前朝向成为 map 系的 yaw=0
+  void update_imu_yaw(double raw_yaw);
+  void reset_imu_zero();
+  double get_imu_yaw_offset() const;
+  double get_corrected_imu_yaw() const;
+
 private:
   bool load_chassis_params(chassis::DiffDriveParams & out);
   bool load_scara_arm_params(scara_arm::ScaraArmParams & out);
@@ -42,6 +50,9 @@ private:
   std::unique_ptr<chassis::DiffDriveChassis> chassis_;
   std::unique_ptr<scara_arm::RobotArm> arm_;
   bool open_{false};
+
+  std::atomic<double> current_imu_yaw_raw_{0.0};
+  double imu_yaw_offset_{0.0};
 };
 
 }  // namespace robot_platform

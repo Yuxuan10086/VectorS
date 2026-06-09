@@ -98,6 +98,12 @@ void CanInterface::close()
   }
 }
 
+void CanInterface::drain_rx_route(uint32_t route_id)
+{
+  std::lock_guard<std::mutex> lk(rx_mutex_);
+  rx_queue_by_route_.erase(route_id);
+}
+
 bool CanInterface::try_receive(uint32_t route_id, std::vector<uint8_t> & out)
 {
   std::lock_guard<std::mutex> lk(rx_mutex_);

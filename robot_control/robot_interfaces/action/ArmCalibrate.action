@@ -1,0 +1,19 @@
+# 机械臂整臂标定 Action（顺序：Z 碰停 -> J2 碰停 -> J1 碰停）
+# Goal 为空，仅触发标定
+
+---
+
+# Result
+bool success
+string message
+
+---
+
+# Feedback：每完成一个轴（或关键阶段）后发布一次消息
+# UI 可据此更新三个轴的状态灯/进度条
+string completed_axis   # 刚完成的轴："z" / "j2" / "j1" / ""（初始）
+float64 progress        # 总体进度 0.0 ~ 1.0
+bool z_done
+bool j1_done
+bool j2_done
+string current_step     # 当前步骤描述（如 "正在标定 Z 上限..."）

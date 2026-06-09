@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>电机系统监控 · Motor Monitor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; background: #020617; color: #e2e8f0; }
+    .panel { background: #0f172a; border: 1px solid #1e293b; }
+    .metric { font-variant-numeric: tabular-nums; }
+    .motor-disabled { opacity: 0.45; }
+    .chart-box { height: 140px; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <header class="border-b border-slate-800 bg-slate-950/80 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">电机系统监控</h1>
+      <p class="text-xs text-slate-500">0x31 系统参数 · 速度环 PID · 固定时间窗实时曲线</p>
+    </div>
+    <div class="flex items-center gap-3 flex-wrap">
+      <label class="flex items-center gap-2 text-sm bg-slate-900 border border-slate-800 rounded-full px-3 py-1.5">
+        <span class="text-slate-400">时间窗</span>
+        <select id="window-sec" class="bg-transparent text-slate-200 outline-none" onchange="onWindowChange()">
+          <option value="30">30 秒</option>
+          <option value="60" selected>60 秒</option>
+          <option value="120">120 秒</option>
+        </select>
+      </label>
+      <div class="flex items-center gap-2 text-sm bg-slate-900 border border-slate-800 rounded-full px-3 py-1.5">
+        <span id="ws-dot" class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+        <span id="ws-text">未连接</span>
+      </div>
+      <a href="/" class="text-sm text-blue-400 hover:text-blue-300 border border-slate-700 rounded-full px-4 py-1.5">← 控制面板</a>
+    </div>
+  </header>
+
+  <main id="motor-grid" class="p-6 grid grid-cols-1 xl:grid-cols-2 gap-6"></main>
+
+  <script>
+    const MOTORS = [
+      { motor_id: 5, label: 'left',  title: '左轮 (ID 5)' },
+      { motor_id: 4, label: 'right', title: '右轮 (ID 4)' },
+      { motor_id: 1, label: 'z',     title: 'Z 轴 (ID 1)' },
+      { motor_id: 3, label: 'j1',    title: 'J1 (ID 3)' },
+      { motor_id: 2, label: 'j2',    title: 'J2 (ID 2)' },
+    ];
+    const CHASSIS_WHEEL_IDS = [5, 4];
+
+    let WINDOW_SEC = 60;
+    const charts = {};
+    const history = {};
+    const chassisPidRead = { results: {}, applyPending: 0, applyResults: {} };
+
+    function windowMs() {
+      return WINDOW_SEC * 1000;
+    }
+
+    function wsUrl() {
+      const p = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${p}//${location.host}/ws/monitor`;
+    }
+
+    function formatTick(ms) {
+      const sec = Math.round((Date.now() - ms) / 1000);
+      if (sec <= 0) return 'now';
+      return `-${sec}s`;
+    }
+
+    function makeChartOptions(color) {
+      return {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        parsing: false,
+        normalized: true,
+        scales: {
+          x: {
+            type: 'linear',
+            display: true,
+            min: Date.now() - windowMs(),
+            max: Date.now(),
+            ticks: {
+              color: '#64748b',
+              maxTicksLimit: 6,
+              callback: (v) => formatTick(v),
+            },
+            grid: { color: '#1e293b' },
+          },
+          y: {
+            ticks: { color: '#64748b', maxTicksLimit: 4 },
+            grid: { color: '#1e293b' },
+          },
+        },
+        plugins: { legend: { display: false } },
+        elements: { point: { radius: 0 }, line: { borderWidth: 1.5 } },
+      };
+    }
+
+    function initChassisPidPanel() {
+      const el = document.createElement('section');
+      el.id = 'chassis-pid-panel';
+      el.className = 'panel rounded-2xl p-5 xl:col-span-2';
+      el.innerHTML = `
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <h2 class="text-lg font-semibold">底盘轮组速度环 PID</h2>
+            <p class="text-xs text-slate-500">左轮 ID 5 · 右轮 ID 4 · 统一读取 / 统一应用</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3 max-w-xl mb-3">
+          <label class="text-xs">P<input id="pid-p-chassis" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+          <label class="text-xs">I<input id="pid-i-chassis" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+          <label class="text-xs">D<input id="pid-d-chassis" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="readChassisPid()" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700">读取</button>
+          <button onclick="applyChassisPid()" class="text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white">应用到左右轮</button>
+        </div>
+        <p id="pid-msg-chassis" class="text-xs text-slate-500 mt-2"></p>`;
+      document.getElementById('motor-grid').appendChild(el);
+    }
+
+    function initCard(m) {
+      const id = m.motor_id;
+      const showPid = !CHASSIS_WHEEL_IDS.includes(id);
+      history[id] = { v: [], c: [], r: [] };
+      const el = document.createElement('section');
+      el.id = `card-${id}`;
+      el.className = 'panel rounded-2xl p-5 motor-disabled';
+      const pidBlock = showPid ? `
+        <div class="border-t border-slate-800 pt-4">
+          <div class="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wide">速度环 PID</div>
+          <div class="grid grid-cols-3 gap-2 mb-2">
+            <label class="text-xs">P<input id="pid-p-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+            <label class="text-xs">I<input id="pid-i-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+            <label class="text-xs">D<input id="pid-d-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="readPid(${id})" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700">读取</button>
+            <button onclick="applyPid(${id})" class="text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white">应用</button>
+          </div>
+          <p id="pid-msg-${id}" class="text-xs text-slate-500 mt-2"></p>
+        </div>` : '';
+      el.innerHTML = `
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <h2 class="text-lg font-semibold">${m.title}</h2>
+            <p class="text-xs text-slate-500">motor_id = ${id}</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button onclick="fetchOnce(${id})"
+                    class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700">
+              获取一次
+            </button>
+            <label class="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" id="en-${id}" class="accent-blue-500" onchange="toggleMonitor(${id})">
+              <span>启用实时反馈</span>
+            </label>
+          </div>
+        </div>
+        <div class="mb-4">
+          <div class="flex justify-between text-xs text-slate-400 mb-1">
+            <span>采样频率</span>
+            <span id="hz-label-${id}" class="metric">15 Hz</span>
+          </div>
+          <input type="range" id="hz-${id}" min="1" max="30" value="15" class="w-full accent-blue-500"
+                 oninput="setRate(${id}, this.value)">
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+          <div class="md:col-span-3 flex flex-col gap-3">
+            <div><div class="text-xs text-slate-500 mb-1">母线电压 (V)</div><div class="chart-box"><canvas id="chart-v-${id}"></canvas></div></div>
+            <div><div class="text-xs text-slate-500 mb-1">相电流 (mA)</div><div class="chart-box"><canvas id="chart-c-${id}"></canvas></div></div>
+            <div><div class="text-xs text-slate-500 mb-1">转速 (RPM)</div><div class="chart-box"><canvas id="chart-r-${id}"></canvas></div></div>
+          </div>
+          <div id="static-${id}" class="md:col-span-2 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 gap-x-3 gap-y-2 text-xs text-slate-400 self-start"></div>
+        </div>
+        ${pidBlock}`;
+      document.getElementById('motor-grid').appendChild(el);
+
+      charts[id] = {
+        v: new Chart(document.getElementById(`chart-v-${id}`), {
+          type: 'line',
+          data: { datasets: [{ data: [], borderColor: '#38bdf8', tension: 0.15 }] },
+          options: makeChartOptions('#38bdf8'),
+        }),
+        c: new Chart(document.getElementById(`chart-c-${id}`), {
+          type: 'line',
+          data: { datasets: [{ data: [], borderColor: '#fbbf24', tension: 0.15 }] },
+          options: makeChartOptions('#fbbf24'),
+        }),
+        r: new Chart(document.getElementById(`chart-r-${id}`), {
+          type: 'line',
+          data: { datasets: [{ data: [], borderColor: '#4ade80', tension: 0.15 }] },
+          options: makeChartOptions('#4ade80'),
+        }),
+      };
+      renderStatic(id, null);
+    }
+
+    function pruneSeries(series) {
+      const now = Date.now();
+      const min = now - windowMs();
+      while (series.length && series[0].x < min) {
+        series.shift();
+      }
+      return { now, min };
+    }
+
+    function updateChart(chart, series, value) {
+      const now = Date.now();
+      series.push({ x: now, y: value });
+      const bounds = pruneSeries(series);
+      chart.data.datasets[0].data = series;
+      chart.options.scales.x.min = bounds.min;
+      chart.options.scales.x.max = bounds.now;
+      chart.update('none');
+    }
+
+    function refreshAllChartWindows() {
+      const now = Date.now();
+      const min = now - windowMs();
+      for (const id of Object.keys(charts)) {
+        const h = history[id];
+        for (const key of ['v', 'c', 'r']) {
+          pruneSeries(h[key]);
+          const chart = charts[id][key];
+          chart.data.datasets[0].data = h[key];
+          chart.options.scales.x.min = min;
+          chart.options.scales.x.max = now;
+          chart.update('none');
+        }
+      }
+    }
+
+    function onWindowChange() {
+      WINDOW_SEC = parseInt(document.getElementById('window-sec').value, 10) || 60;
+      refreshAllChartWindows();
+    }
+
+    function renderStatic(id, st) {
+      const el = document.getElementById(`static-${id}`);
+      if (!st) {
+        el.innerHTML = '<p class="col-span-full text-slate-600">等待数据…</p>';
+        return;
+      }
+      const rows = [
+        ['磁链', st.flux_mwb?.toFixed?.(2) ?? st.flux_mwb, 'mWb'],
+        ['相电阻', st.phase_resistance_ohm?.toFixed?.(2) ?? st.phase_resistance_ohm, 'Ω'],
+        ['相电感', st.phase_inductance_mh?.toFixed?.(2) ?? st.phase_inductance_mh, 'mH'],
+        ['目标位置', st.target_position, ''],
+        ['实时位置', st.position, ''],
+        ['位置误差', st.position_error, ''],
+        ['脉冲计数', st.pulse_count, ''],
+        ['使能', st.enabled ? '是' : '否', ''],
+        ['到位', st.arrived ? '是' : '否', ''],
+        ['堵转', st.stalled ? '是' : '否', ''],
+        ['地址模式', st.addr_mode, ''],
+        ['错误', st.error_hint || '—', ''],
+      ];
+      el.innerHTML = rows.map(([k, v, unit]) => `
+        <div class="min-w-0 border-b border-slate-800/50 pb-1.5">
+          <div class="text-slate-500 truncate" title="${k}">${k}${unit ? ` (${unit})` : ''}</div>
+          <div class="metric text-slate-300 truncate" title="${v}">${v}</div>
+        </div>
+      `).join('');
+    }
+
+    function pushHistory(id, st) {
+      const h = history[id];
+      updateChart(charts[id].v, h.v, st.bus_voltage_v);
+      updateChart(charts[id].c, h.c, st.phase_current_ma);
+      updateChart(charts[id].r, h.r, st.rpm);
+      renderStatic(id, st);
+    }
+
+    function toggleMonitor(id) {
+      const en = document.getElementById(`en-${id}`).checked;
+      const hz = parseFloat(document.getElementById(`hz-${id}`).value);
+      document.getElementById(`card-${id}`).classList.toggle('motor-disabled', !en);
+      ws.send(JSON.stringify({ type: 'set_monitor', motor_id: id, enable: en, rate_hz: hz }));
+    }
+
+    function setRate(id, hz) {
+      document.getElementById(`hz-label-${id}`).textContent = `${hz} Hz`;
+      if (document.getElementById(`en-${id}`).checked) {
+        ws.send(JSON.stringify({ type: 'set_monitor', motor_id: id, enable: true, rate_hz: parseFloat(hz) }));
+      }
+    }
+
+    function fetchOnce(id) {
+      ws.send(JSON.stringify({ type: 'fetch_state', motor_id: id }));
+    }
+
+    function readPid(id) {
+      ws.send(JSON.stringify({ type: 'get_pid', motor_id: id }));
+    }
+
+    function applyPid(id) {
+      const p = parseInt(document.getElementById(`pid-p-${id}`).value, 10) || 0;
+      const i = parseInt(document.getElementById(`pid-i-${id}`).value, 10) || 0;
+      const d = parseInt(document.getElementById(`pid-d-${id}`).value, 10) || 0;
+      ws.send(JSON.stringify({ type: 'set_pid', motor_id: id, p, i, d }));
+    }
+
+    function readChassisPid() {
+      chassisPidRead.results = {};
+      const el = document.getElementById('pid-msg-chassis');
+      el.textContent = '正在读取左右轮…';
+      el.className = 'text-xs text-slate-400 mt-2';
+      CHASSIS_WHEEL_IDS.forEach(id => {
+        ws.send(JSON.stringify({ type: 'get_pid', motor_id: id }));
+      });
+    }
+
+    function applyChassisPid() {
+      const p = parseInt(document.getElementById('pid-p-chassis').value, 10) || 0;
+      const i = parseInt(document.getElementById('pid-i-chassis').value, 10) || 0;
+      const d = parseInt(document.getElementById('pid-d-chassis').value, 10) || 0;
+      chassisPidRead.applyPending = CHASSIS_WHEEL_IDS.length;
+      chassisPidRead.applyResults = {};
+      const el = document.getElementById('pid-msg-chassis');
+      el.textContent = '正在写入左右轮…';
+      el.className = 'text-xs text-slate-400 mt-2';
+      ws.send(JSON.stringify({ type: 'set_chassis_pid', p, i, d }));
+    }
+
+    function handleChassisPidRead(msg) {
+      chassisPidRead.results[msg.motor_id] = msg;
+      if (Object.keys(chassisPidRead.results).length < CHASSIS_WHEEL_IDS.length) return;
+
+      const el = document.getElementById('pid-msg-chassis');
+      const left = chassisPidRead.results[5];
+      const right = chassisPidRead.results[4];
+      const okLeft = left?.success;
+      const okRight = right?.success;
+
+      if (!okLeft && !okRight) {
+        el.textContent = left?.message || right?.message || '读取失败';
+        el.className = 'text-xs text-red-400 mt-2';
+        return;
+      }
+
+      const ref = okLeft ? left : right;
+      document.getElementById('pid-p-chassis').value = ref.p;
+      document.getElementById('pid-i-chassis').value = ref.i;
+      document.getElementById('pid-d-chassis').value = ref.d;
+
+      const mismatch = okLeft && okRight &&
+        (left.p !== right.p || left.i !== right.i || left.d !== right.d);
+      if (mismatch) {
+        el.textContent = `左右轮 PID 不一致：左 ${left.p}/${left.i}/${left.d}，右 ${right.p}/${right.i}/${right.d}（已显示左轮）`;
+        el.className = 'text-xs text-amber-400 mt-2';
+      } else {
+        const label = okLeft && okRight ? '左右轮' : (okLeft ? '左轮' : '右轮');
+        el.textContent = `${label} PID 已读取`;
+        el.className = 'text-xs text-emerald-400 mt-2';
+      }
+    }
+
+    function handleChassisPidApply(msg) {
+      if (!CHASSIS_WHEEL_IDS.includes(msg.motor_id)) return;
+      chassisPidRead.applyResults[msg.motor_id] = msg;
+      chassisPidRead.applyPending -= 1;
+      if (chassisPidRead.applyPending > 0) return;
+
+      const el = document.getElementById('pid-msg-chassis');
+      const failed = CHASSIS_WHEEL_IDS.filter(id => !chassisPidRead.applyResults[id]?.success);
+      if (failed.length === 0) {
+        const ref = chassisPidRead.applyResults[5] || chassisPidRead.applyResults[4];
+        document.getElementById('pid-p-chassis').value = ref.p;
+        document.getElementById('pid-i-chassis').value = ref.i;
+        document.getElementById('pid-d-chassis').value = ref.d;
+        el.textContent = '已应用到左轮 (ID 5) 与右轮 (ID 4)';
+        el.className = 'text-xs text-emerald-400 mt-2';
+      } else if (failed.length === CHASSIS_WHEEL_IDS.length) {
+        el.textContent = chassisPidRead.applyResults[failed[0]]?.message || '应用失败';
+        el.className = 'text-xs text-red-400 mt-2';
+      } else {
+        const name = failed[0] === 5 ? '左轮' : '右轮';
+        el.textContent = `${name} 应用失败：${chassisPidRead.applyResults[failed[0]]?.message || '未知错误'}`;
+        el.className = 'text-xs text-amber-400 mt-2';
+      }
+      chassisPidRead.applyPending = 0;
+    }
+
+    let ws;
+    function syncMonitorSlots() {
+      MOTORS.forEach(m => {
+        const id = m.motor_id;
+        const en = document.getElementById(`en-${id}`).checked;
+        const hz = parseFloat(document.getElementById(`hz-${id}`).value);
+        ws.send(JSON.stringify({ type: 'set_monitor', motor_id: id, enable: en, rate_hz: hz }));
+      });
+    }
+
+    function connect() {
+      ws = new WebSocket(wsUrl());
+      ws.onopen = () => {
+        document.getElementById('ws-dot').className = 'w-2.5 h-2.5 rounded-full bg-emerald-500';
+        document.getElementById('ws-text').textContent = '已连接';
+        syncMonitorSlots();
+      };
+      ws.onclose = () => {
+        document.getElementById('ws-dot').className = 'w-2.5 h-2.5 rounded-full bg-red-500';
+        document.getElementById('ws-text').textContent = '已断开';
+        setTimeout(connect, 2000);
+      };
+      ws.onmessage = (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.type === 'motor_state' && msg.state) {
+          const id = msg.state.motor_id;
+          if (msg.state.success) pushHistory(id, msg.state);
+          else renderStatic(id, { error_hint: msg.state.message || '读取失败' });
+        } else if (msg.type === 'pid_result') {
+          const id = msg.motor_id;
+          if (CHASSIS_WHEEL_IDS.includes(id)) {
+            if (chassisPidRead.applyPending > 0) {
+              handleChassisPidApply(msg);
+            } else {
+              handleChassisPidRead(msg);
+            }
+            return;
+          }
+          const el = document.getElementById(`pid-msg-${id}`);
+          if (!el) return;
+          if (msg.success) {
+            document.getElementById(`pid-p-${id}`).value = msg.p;
+            document.getElementById(`pid-i-${id}`).value = msg.i;
+            document.getElementById(`pid-d-${id}`).value = msg.d;
+            el.textContent = msg.message || 'OK';
+            el.className = 'text-xs text-emerald-400 mt-2';
+          } else {
+            el.textContent = msg.message || '失败';
+            el.className = 'text-xs text-red-400 mt-2';
+          }
+        }
+      };
+    }
+
+    initChassisPidPanel();
+    MOTORS.forEach(initCard);
+    connect();
+
+    // 无新数据时也推进时间窗左边界（资源监视器式滑动窗口）
+    setInterval(() => {
+      const anyEnabled = MOTORS.some(m => document.getElementById(`en-${m.motor_id}`)?.checked);
+      if (anyEnabled) refreshAllChartWindows();
+    }, 500);
+  </script>
+</body>
+</html>

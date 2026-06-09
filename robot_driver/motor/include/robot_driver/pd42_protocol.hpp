@@ -82,6 +82,16 @@ inline void float_ieee754_to_big_endian_bytes(float v, std::array<uint8_t, 4> & 
   uint32_to_big_endian(u, out);
 }
 
+/** 协议载荷为大端 IEEE754 float（与 float_ieee754_to_big_endian_bytes 互逆） */
+inline float float_from_big_endian_bytes(const uint8_t b[4])
+{
+  std::array<uint8_t, 4> native{b[3], b[2], b[1], b[0]};
+  float v = 0.F;
+  static_assert(sizeof(float) == 4U, "float must be 32-bit");
+  std::memcpy(&v, native.data(), sizeof(float));
+  return v;
+}
+
 inline void uint16_to_big_endian(uint16_t v, uint8_t out[2])
 {
   out[0] = static_cast<uint8_t>((v >> 8) & 0xFFU);
@@ -97,6 +107,15 @@ inline int16_t int16_from_big_endian(const uint8_t b[2])
 inline int32_t int32_from_big_endian(const uint8_t b[4])
 {
   return static_cast<int32_t>(
+    (static_cast<uint32_t>(b[0]) << 24) |
+    (static_cast<uint32_t>(b[1]) << 16) |
+    (static_cast<uint32_t>(b[2]) << 8) |
+    static_cast<uint32_t>(b[3]));
+}
+
+inline uint32_t uint32_from_big_endian(const uint8_t b[4])
+{
+  return static_cast<uint32_t>(
     (static_cast<uint32_t>(b[0]) << 24) |
     (static_cast<uint32_t>(b[1]) << 16) |
     (static_cast<uint32_t>(b[2]) << 8) |
@@ -325,6 +344,44 @@ inline std::vector<uint8_t> make_read_stall_current_frame(uint8_t addr)
   return build_downlink(addr, 0x2E);
 }
 
+/** 手册 4.3.7：读取速度环 PID 参数（0x26） */
+inline std::vector<uint8_t> make_read_speed_loop_pid_frame(uint8_t addr)
+{
+  return build_downlink(addr, 0x26);
+}
+
+/** 手册 4.3.18：读取系统参数（0x31） */
+inline std::vector<uint8_t> make_read_system_parameters_frame(uint8_t addr)
+{
+  return build_downlink(addr, 0x31);
+}
+
+/** 手册 4.3.39：设置速度环 PID 参数（0x73）；P/I/D 为大端 uint32_t */
+inline std::vector<uint8_t> make_set_speed_loop_pid_frame(
+  uint8_t addr, uint32_t p, uint32_t i, uint32_t d)
+{
+  std::array<uint8_t, 4> be_p{};
+  std::array<uint8_t, 4> be_i{};
+  std::array<uint8_t, 4> be_d{};
+  uint32_to_big_endian(p, be_p);
+  uint32_to_big_endian(i, be_i);
+  uint32_to_big_endian(d, be_d);
+  std::array<uint8_t, 12> pl{};
+  pl[0] = be_p[0];
+  pl[1] = be_p[1];
+  pl[2] = be_p[2];
+  pl[3] = be_p[3];
+  pl[4] = be_i[0];
+  pl[5] = be_i[1];
+  pl[6] = be_i[2];
+  pl[7] = be_i[3];
+  pl[8] = be_d[0];
+  pl[9] = be_d[1];
+  pl[10] = be_d[2];
+  pl[11] = be_d[3];
+  return build_downlink(addr, 0x73, pl.data(), pl.size());
+}
+
 /** 0x29 应答：Byte2~3 实时转速 int16（RPM），大端 */
 inline std::optional<int16_t> parse_read_speed_rpm(const std::vector<uint8_t> & frame)
 {
@@ -381,6 +438,85 @@ inline std::optional<int16_t> parse_read_phase_current_ma(const std::vector<uint
   }
   const uint8_t b[2] = {frame[4], frame[5]};
   return int16_from_big_endian(b);
+}
+
+/** 速度环 PID 参数（0x73 下行 / 0x26 应答同形） */
+struct Pd42SpeedLoopPid
+{
+  uint32_t p{};
+  uint32_t i{};
+  uint32_t d{};
+};
+
+/** 0x26 应答：Byte2~5 P，Byte6~9 I，Byte10~13 D（大端 uint32） */
+inline std::optional<Pd42SpeedLoopPid> parse_read_speed_loop_pid(const std::vector<uint8_t> & frame)
+{
+  if (!reply_success(frame, 0x26) || frame.size() < 18U) {
+    return std::nullopt;
+  }
+  const uint8_t bp[4] = {frame[4], frame[5], frame[6], frame[7]};
+  const uint8_t bi[4] = {frame[8], frame[9], frame[10], frame[11]};
+  const uint8_t bd[4] = {frame[12], frame[13], frame[14], frame[15]};
+  Pd42SpeedLoopPid out{};
+  out.p = uint32_from_big_endian(bp);
+  out.i = uint32_from_big_endian(bi);
+  out.d = uint32_from_big_endian(bd);
+  return out;
+}
+
+/** 手册 4.3.18：0x31 应答系统参数（Byte1 在 frame[3]，Byte41 在 frame[43]） */
+struct Pd42SystemParameters
+{
+  float bus_voltage_v{};
+  int16_t phase_current_ma{};
+  float flux_mwb{};
+  float phase_resistance_ohm{};
+  float phase_inductance_mh{};
+  int16_t rpm{};
+  int32_t target_position{};
+  int32_t position{};
+  int32_t position_error{};
+  uint32_t pulse_count{};
+  bool enabled{};       // true：电机使能（手册 Byte38==0）
+  bool arrived{};
+  bool stalled{};
+  uint8_t addr_mode{};  // 0：从机地址；1：分组地址
+};
+
+inline std::optional<Pd42SystemParameters> parse_read_system_parameters(
+  const std::vector<uint8_t> & frame)
+{
+  if (!reply_success(frame, 0x31) || frame.size() < 46U) {
+    return std::nullopt;
+  }
+
+  Pd42SystemParameters out{};
+  const uint8_t b2[4] = {frame[4], frame[5], frame[6], frame[7]};
+  const uint8_t b6[2] = {frame[8], frame[9]};
+  const uint8_t b8[4] = {frame[10], frame[11], frame[12], frame[13]};
+  const uint8_t b12[4] = {frame[14], frame[15], frame[16], frame[17]};
+  const uint8_t b16[4] = {frame[18], frame[19], frame[20], frame[21]};
+  const uint8_t b20[2] = {frame[22], frame[23]};
+  const uint8_t b22[4] = {frame[24], frame[25], frame[26], frame[27]};
+  const uint8_t b26[4] = {frame[28], frame[29], frame[30], frame[31]};
+  const uint8_t b30[4] = {frame[32], frame[33], frame[34], frame[35]};
+  const uint8_t b34[4] = {frame[36], frame[37], frame[38], frame[39]};
+
+  out.bus_voltage_v = float_from_big_endian_bytes(b2);
+  out.phase_current_ma = int16_from_big_endian(b6);
+  out.flux_mwb = float_from_big_endian_bytes(b8);
+  out.phase_resistance_ohm = float_from_big_endian_bytes(b12);
+  out.phase_inductance_mh = float_from_big_endian_bytes(b16);
+  out.rpm = int16_from_big_endian(b20);
+  out.target_position = int32_from_big_endian(b22);
+  out.position = int32_from_big_endian(b26);
+  out.position_error = int32_from_big_endian(b30);
+  out.pulse_count = uint32_from_big_endian(b34);
+  out.enabled = (frame[40] == 0U);
+  out.arrived = (frame[41] != 0U);
+  out.stalled = (frame[42] != 0U);
+  out.addr_mode = frame[43];
+  return out;
 }
 
 /**

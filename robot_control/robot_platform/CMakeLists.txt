@@ -17,6 +17,9 @@ find_package(motor REQUIRED)
 find_package(chassis REQUIRED)
 find_package(scara_arm REQUIRED)
 find_package(robot_interfaces REQUIRED)
+find_package(std_srvs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
 
 add_library(${PROJECT_NAME} STATIC
   src/platform.cpp
@@ -39,6 +42,9 @@ ament_target_dependencies(platform_node
   geometry_msgs
   sensor_msgs
   robot_interfaces
+  std_srvs
+  tf2
+  tf2_ros
 )
 target_link_libraries(platform_node ${PROJECT_NAME})
 
@@ -59,6 +65,6 @@ install(DIRECTORY launch config
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_include_directories(include)
-ament_export_dependencies(rclcpp rclcpp_action geometry_msgs sensor_msgs action_msgs motor chassis scara_arm robot_interfaces)
+ament_export_dependencies(rclcpp rclcpp_action geometry_msgs sensor_msgs action_msgs motor chassis scara_arm robot_interfaces std_srvs tf2 tf2_ros)
 
 ament_package()

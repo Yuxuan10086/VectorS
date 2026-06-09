@@ -18,9 +18,15 @@
   <depend>chassis</depend>
   <depend>scara_arm</depend>
   <depend>robot_interfaces</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
 
   <exec_depend>ros2launch</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
+
+  <!-- platform.launch.py 现在负责启动以下节点 -->
+  <exec_depend>wit_ros2_imu</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

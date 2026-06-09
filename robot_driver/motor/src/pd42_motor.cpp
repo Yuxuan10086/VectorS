@@ -23,19 +23,8 @@ constexpr std::uint8_t kErrWrongCommMode = 0xFA;
 }  // namespace
 
 Pd42Motor::Pd42Motor(CanInterface & can, std::uint8_t motor_id, std::uint16_t stall_current_ma)
-: can_(can), motor_id_(motor_id)
-{
-  if (motor_id_ == 0) {
-    return;
-  }
-  const auto cfg = make_set_send_can_id_frame(motor_id_, default_can_eff_id(motor_id_));
-  if (!send_cmd(cfg)) {
-    return;
-  }
-  // CAN ID 已生效后再设堵转；save 须在堵转指令之后，否则掉电不保存堵转阈值（0x6B/0x6A）
-  (void)enable_stall_protection(stall_current_ma);
-  (void)save_parameters();
-}
+: can_(can), motor_id_(motor_id), stall_current_ma_(stall_current_ma)
+{}
 
 std::optional<std::vector<std::uint8_t>> Pd42Motor::send_cmd(const std::vector<std::uint8_t> & bytes)
 {
@@ -78,6 +67,37 @@ std::optional<std::vector<std::uint8_t>> Pd42Motor::send_cmd(const std::vector<s
     }
     std::this_thread::sleep_for(std::chrono::microseconds(200));
   }
+}
+
+std::optional<Pd42SystemParameters> Pd42Motor::read_system_parameters()
+{
+  auto reply = send_cmd(make_read_system_parameters_frame(motor_id_));
+  if (!reply) {
+    return std::nullopt;
+  }
+  if (auto params = parse_read_system_parameters(*reply)) {
+    return params;
+  }
+  error_code_ = kErrReplyMismatch;
+  return std::nullopt;
+}
+
+bool Pd42Motor::set_speed_loop_pid(std::uint32_t p, std::uint32_t i, std::uint32_t d)
+{
+  return send_cmd(make_set_speed_loop_pid_frame(motor_id_, p, i, d)).has_value();
+}
+
+std::optional<Pd42SpeedLoopPid> Pd42Motor::read_speed_loop_pid()
+{
+  auto reply = send_cmd(make_read_speed_loop_pid_frame(motor_id_));
+  if (!reply) {
+    return std::nullopt;
+  }
+  if (auto v = parse_read_speed_loop_pid(*reply)) {
+    return v;
+  }
+  error_code_ = kErrReplyMismatch;
+  return std::nullopt;
 }
 
 std::optional<int16_t> Pd42Motor::rpm()
@@ -157,6 +177,26 @@ bool Pd42Motor::enable(bool on)
 
 bool Pd42Motor::initialize()
 {
+  if (motor_id_ == 0U) {
+    error_code_ = kErrBadCommandFrame;
+    return false;
+  }
+
+  const auto cfg = make_set_send_can_id_frame(motor_id_, default_can_eff_id(motor_id_));
+  if (!send_cmd(cfg)) {
+    return false;
+  }
+
+  if (stall_current_ma_ != kDisableStallProtection) {
+    if (!enable_stall_protection(stall_current_ma_)) {
+      return false;
+    }
+  }
+
+  if (!save_parameters()) {
+    return false;
+  }
+
   if (!clear_status()) {
     return false;
   }

@@ -103,6 +103,34 @@
       font-family: ui-monospace, monospace;
       font-size: 13px;
     }
+
+    .heading-compass {
+      width: 2.25rem;
+      height: 2.25rem;
+      border-radius: 9999px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .heading-compass::before {
+      content: '';
+      position: absolute;
+      inset: 3px;
+      border-radius: 9999px;
+      border: 1px dashed #475569;
+      pointer-events: none;
+    }
+
+    .heading-arrow {
+      color: #22d3ee;
+      font-size: 0.95rem;
+      transform-origin: center center;
+      transition: transform 0.12s linear;
+    }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-200">
@@ -139,6 +167,12 @@
           </div>
         </div>
 
+        <a href="/monitor"
+           class="flex items-center gap-x-2 px-4 py-2 rounded-3xl text-sm font-medium text-blue-300 bg-slate-900 border border-slate-700 hover:border-blue-500/50">
+          <i class="fa-solid fa-gauge-high"></i>
+          <span>系统监控</span>
+        </a>
+
         <!-- E-STOP -->
         <button onclick="sendEmergencyStop()"
                 class="estop flex items-center justify-center gap-x-2 px-5 py-2 rounded-3xl text-white font-semibold text-sm shadow-xl active:scale-[0.985]">
@@ -160,10 +194,21 @@
             </div>
             <div class="text-xs text-slate-500 mt-0.5">仅在 TWIST 模式下推荐持续使用</div>
           </div>
-          <div class="text-right">
-            <div class="text-[10px] text-slate-500">当前速度</div>
-            <div class="font-mono text-sm">
-              <span id="twist-display" class="ros-value text-emerald-400">0.00 m/s, 0.00 rad/s</span>
+          <div class="flex flex-col items-end gap-2">
+            <div class="text-right">
+              <div class="text-[10px] text-slate-500">当前速度</div>
+              <div class="font-mono text-sm">
+                <span id="twist-display" class="ros-value text-emerald-400">0.00 m/s, 0.0 °/s</span>
+              </div>
+            </div>
+            <div class="text-right">
+              <div class="text-[10px] text-slate-500">车身朝向</div>
+              <div class="flex items-center gap-2 justify-end">
+                <div class="heading-compass" title="车头方向（俯视，0° 为初始朝向）">
+                  <i id="heading-arrow" class="fa-solid fa-location-arrow heading-arrow"></i>
+                </div>
+                <span id="heading-display" class="ros-value text-cyan-400 metric">无数据</span>
+              </div>
             </div>
           </div>
         </div>
@@ -225,9 +270,9 @@
             <div>
               <div class="flex justify-between items-baseline mb-1 px-0.5">
                 <div class="slider-label">角速度上限</div>
-                <div id="ang-speed-val" class="font-mono text-xs text-blue-400">0.60 rad/s</div>
+                <div id="ang-speed-val" class="font-mono text-xs text-blue-400">34 °/s</div>
               </div>
-              <input type="range" id="ang-speed-slider" min="0.1" max="2.5" step="0.05" value="0.60"
+              <input type="range" id="ang-speed-slider" min="5" max="145" step="1" value="34"
                      class="w-full accent-blue-500" oninput="updateSpeedLimits()">
             </div>
 
@@ -312,7 +357,7 @@
           <div>
             <div class="flex justify-between text-xs mb-1 px-0.5">
               <div class="flex items-center gap-x-2"><span class="font-semibold text-amber-400">J1</span> <span class="text-slate-400 text-[10px]">肩关节</span></div>
-              <div class="font-mono text-amber-400 metric"><span id="arm-j1-val">90.0</span></div>
+              <div class="font-mono text-amber-400 metric"><span id="arm-j1-val">90.0°</span></div>
             </div>
             <div class="flex items-center gap-x-2">
               <input type="range" id="arm-j1-slider" min="0" max="180" step="0.5" value="90"
@@ -330,7 +375,7 @@
           <div>
             <div class="flex justify-between text-xs mb-1 px-0.5">
               <div class="flex items-center gap-x-2"><span class="font-semibold text-violet-400">J2</span> <span class="text-slate-400 text-[10px]">肘关节</span></div>
-              <div class="font-mono text-violet-400 metric"><span id="arm-j2-val">90.0</span></div>
+              <div class="font-mono text-violet-400 metric"><span id="arm-j2-val">90.0°</span></div>
             </div>
             <div class="flex items-center gap-x-2">
               <input type="range" id="arm-j2-slider" min="0" max="180" step="0.5" value="90"
@@ -368,13 +413,13 @@
             <div class="flex gap-2">
               <button id="btn-mode-twist"
                       onclick="setDriveMode(0)"
-                      class="flex-1 flex items-center justify-center gap-x-2 py-3 rounded-3xl text-sm font-semibold border transition-all bg-emerald-600/90 hover:bg-emerald-600 border-emerald-400 text-white">
+                      class="mode-switch-btn flex-1 flex items-center justify-center gap-x-2 py-3 rounded-3xl text-sm font-semibold border transition-all">
                 <i class="fa-solid fa-tachometer-alt"></i>
                 <span>TWIST 速度模式</span>
               </button>
               <button id="btn-mode-move"
                       onclick="setDriveMode(1)"
-                      class="flex-1 flex items-center justify-center gap-x-2 py-3 rounded-3xl text-sm font-semibold border transition-all bg-slate-700 hover:bg-slate-600 border-slate-400 text-slate-100">
+                      class="mode-switch-btn flex-1 flex items-center justify-center gap-x-2 py-3 rounded-3xl text-sm font-semibold border transition-all">
                 <i class="fa-solid fa-arrows-alt"></i>
                 <span>MOVE 阻塞模式</span>
               </button>
@@ -385,13 +430,47 @@
             </div>
           </div>
 
+          <!-- 机械臂标定（新增） -->
+          <div class="lg:col-span-4">
+            <div class="section-title mb-2 px-1 flex items-center gap-x-2">
+              <i class="fa-solid fa-wrench text-amber-400"></i>
+              <span>机械臂标定</span>
+            </div>
+            <div class="bg-slate-900/70 border border-slate-700 rounded-2xl p-3">
+              <button id="btn-calibrate"
+                      onclick="startCalibrate()"
+                      class="w-full px-4 py-2.5 text-sm font-semibold bg-amber-600 hover:bg-amber-500 active:bg-amber-700 rounded-2xl flex items-center justify-center gap-x-2 mb-3">
+                <i class="fa-solid fa-play"></i>
+                <span>开始整臂标定 (Z→J2→J1)</span>
+              </button>
+
+              <div class="grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <div class="text-[10px] text-slate-400">Z</div>
+                  <div id="calib-z" class="mt-0.5 text-xs font-medium px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">未标定</div>
+                </div>
+                <div>
+                  <div class="text-[10px] text-slate-400">J2</div>
+                  <div id="calib-j2" class="mt-0.5 text-xs font-medium px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">未标定</div>
+                </div>
+                <div>
+                  <div class="text-[10px] text-slate-400">J1</div>
+                  <div id="calib-j1" class="mt-0.5 text-xs font-medium px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">未标定</div>
+                </div>
+              </div>
+
+              <div class="mt-2 text-[10px] text-slate-500">标定中会实时更新状态（每个轴完成推送一次）</div>
+              <div id="calib-step" class="mt-1 text-[11px] font-mono text-amber-300/90 min-h-[1rem]"></div>
+            </div>
+          </div>
+
           <!-- MOVE Actions -->
           <div class="lg:col-span-8">
             <div class="section-title mb-2 px-1 flex items-center gap-x-2">
               <span>阻塞移动 Action（仅 MOVE 模式有效）</span>
             </div>
             
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div id="move-actions-panel" class="grid grid-cols-1 md:grid-cols-2 gap-4 transition-opacity">
               <!-- ChassisMove -->
               <div class="bg-slate-900/70 border border-slate-700 rounded-2xl p-3">
                 <div class="text-emerald-400 text-xs font-medium mb-2 flex items-center gap-x-1.5">
@@ -401,16 +480,16 @@
                 <div class="flex gap-x-2 items-end">
                   <div class="flex-1">
                     <div class="text-[10px] text-slate-400 mb-px">距离 (m)</div>
-                    <input id="move-dist" type="number" step="0.1" value="0.8" class="w-full bg-slate-950 border border-slate-600 focus:border-emerald-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
+                    <input id="move-dist" type="number" step="0.01" value="0.05" class="w-full bg-slate-950 border border-slate-600 focus:border-emerald-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
                   </div>
                   <div class="flex-1">
                     <div class="text-[10px] text-slate-400 mb-px">速度 (m/s)</div>
-                    <input id="move-speed" type="number" step="0.05" value="0.25" class="w-full bg-slate-950 border border-slate-600 focus:border-emerald-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
+                    <input id="move-speed" type="number" step="0.01" value="0.05" class="w-full bg-slate-950 border border-slate-600 focus:border-emerald-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
                   </div>
                   <div class="flex gap-x-1">
-                    <button onclick="sendMoveAction()" 
-                            class="px-4 py-2 text-xs bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-500 rounded-2xl font-medium">发送</button>
-                    <button onclick="cancelCurrentAction('move')" 
+                    <button id="btn-move-send" data-action-send="move" onclick="sendMoveAction()" 
+                            class="px-4 py-2 text-xs bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-500 rounded-2xl font-medium disabled:opacity-40 disabled:cursor-not-allowed">发送</button>
+                    <button id="btn-move-cancel" data-action-cancel="move" onclick="cancelCurrentAction('move')" 
                             class="px-3 py-2 text-xs bg-slate-700 hover:bg-red-700/70 rounded-2xl">取消</button>
                   </div>
                 </div>
@@ -421,6 +500,10 @@
                   <div class="flex justify-between text-[10px] text-slate-400 mt-px">
                     <div>剩余距离</div>
                     <div id="move-remain" class="font-mono">—</div>
+                  </div>
+                  <div class="grid grid-cols-2 gap-x-3 text-[10px] text-slate-400 mt-1.5 font-mono">
+                    <div class="flex justify-between"><span>左编码器</span><span id="move-enc-l" class="text-slate-200">—</span></div>
+                    <div class="flex justify-between"><span>右编码器</span><span id="move-enc-r" class="text-slate-200">—</span></div>
                   </div>
                 </div>
               </div>
@@ -433,17 +516,17 @@
                 </div>
                 <div class="flex gap-x-2 items-end">
                   <div class="flex-1">
-                    <div class="text-[10px] text-slate-400 mb-px">角度 (rad)</div>
-                    <input id="span-angle" type="number" step="0.1" value="1.57" class="w-full bg-slate-950 border border-slate-600 focus:border-amber-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
+                    <div class="text-[10px] text-slate-400 mb-px">角度 (°)</div>
+                    <input id="span-angle" type="number" step="1" value="90" class="w-full bg-slate-950 border border-slate-600 focus:border-amber-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
                   </div>
                   <div class="flex-1">
-                    <div class="text-[10px] text-slate-400 mb-px">角速度 (rad/s)</div>
-                    <input id="span-omega" type="number" step="0.1" value="0.6" class="w-full bg-slate-950 border border-slate-600 focus:border-amber-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
+                    <div class="text-[10px] text-slate-400 mb-px">角速度 (°/s)</div>
+                    <input id="span-omega" type="number" step="1" value="34" class="w-full bg-slate-950 border border-slate-600 focus:border-amber-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
                   </div>
                   <div class="flex gap-x-1">
-                    <button onclick="sendSpanAction()" 
-                            class="px-4 py-2 text-xs bg-amber-700 hover:bg-amber-600 active:bg-amber-500 rounded-2xl font-medium">发送</button>
-                    <button onclick="cancelCurrentAction('span')" 
+                    <button id="btn-span-send" data-action-send="span" onclick="sendSpanAction()" 
+                            class="px-4 py-2 text-xs bg-amber-700 hover:bg-amber-600 active:bg-amber-500 rounded-2xl font-medium disabled:opacity-40 disabled:cursor-not-allowed">发送</button>
+                    <button id="btn-span-cancel" data-action-cancel="span" onclick="cancelCurrentAction('span')" 
                             class="px-3 py-2 text-xs bg-slate-700 hover:bg-red-700/70 rounded-2xl">取消</button>
                   </div>
                 </div>
@@ -467,9 +550,17 @@
       <div class="lg:col-span-12">
         <div class="flex items-center justify-between mb-1.5 px-1">
           <div class="section-title">实时日志 / 反馈</div>
-          <button onclick="clearLog()" class="text-xs px-2.5 py-1 hover:bg-slate-800 transition rounded-2xl text-slate-400">
-            <i class="fa-solid fa-trash fa-xs mr-1"></i>清空
-          </button>
+          <div class="flex items-center gap-2">
+            <button onclick="resetPanelLog()"
+                    class="text-xs px-2.5 py-1 hover:bg-amber-900/40 border border-amber-700/40 transition rounded-2xl text-amber-300/90"
+                    title="删除 log/web_panel 下全部历史会话文件，并新建文件继续记录">
+              <i class="fa-solid fa-file-circle-plus fa-xs mr-1"></i>重置会话日志
+            </button>
+            <button onclick="clearLog()" class="text-xs px-2.5 py-1 hover:bg-slate-800 transition rounded-2xl text-slate-400"
+                    title="仅清空本页显示的日志，不删除磁盘文件">
+              <i class="fa-solid fa-trash fa-xs mr-1"></i>清空显示
+            </button>
+          </div>
         </div>
         <div id="log-container" 
              class="h-36 overflow-auto bg-black/60 border border-slate-800 rounded-3xl p-3 text-xs font-light log-line leading-snug">
@@ -492,6 +583,25 @@
     // WebSocket
     let ws = null;
     let wsConnected = false;
+    let lastMoveGoalDist = 0.05;
+    let lastSpanGoalDeg = 90;
+
+    const RAD2DEG = 180 / Math.PI;
+    const DEG2RAD = Math.PI / 180;
+
+    function radToDeg(rad) {
+      return Number(rad) * RAD2DEG;
+    }
+
+    function degToRad(deg) {
+      return Number(deg) * DEG2RAD;
+    }
+
+    /** 角速度上限滑条为 °/s，发 ROS 前转 rad/s */
+    function getMaxAngRad() {
+      const degPerSec = parseFloat(document.getElementById('ang-speed-slider').value);
+      return (Number.isFinite(degPerSec) ? degPerSec : 34) * DEG2RAD;
+    }
     let lastPing = 0;
     let reconnectTimer = null;
     let joystickActive = false;
@@ -528,6 +638,15 @@
       if (c) c.innerHTML = '';
     }
 
+    function resetPanelLog() {
+      if (!confirm('将删除日志目录中全部历史会话文件（含以往启动留下的），并新建文件继续记录。确定？')) {
+        return;
+      }
+      if (sendWS({ type: 'reset_panel_log' })) {
+        log('正在重置会话文件日志...', 'warn');
+      }
+    }
+
     function updateWSStatus(connected, latencyMs = null) {
       wsConnected = connected;
       const dot = document.getElementById('ws-status-dot');
@@ -562,6 +681,8 @@
       ws = new WebSocket(url);
 
       ws.onopen = () => {
+        statusModeSynced = false;
+        statusActionBusySynced = false;
         updateWSStatus(true);
         log('WebSocket 已连接到控制面板后端', 'success');
         // start heartbeat
@@ -600,6 +721,53 @@
     }
 
     let currentMode = 0;
+    /** MOVE 模式下 Move/Span 是否正在执行（到位前禁止新发指令） */
+    let blockingActionBusy = false;
+    /** 仅 WebSocket 首包 status 同步模式按钮；周期 status 会带切换前的旧 mode，不能用来刷 UI */
+    let statusModeSynced = false;
+    let statusActionBusySynced = false;
+    // 标定状态
+    let calibState = { z: false, j1: false, j2: false, inProgress: false };
+
+    const MODE_BTN_BASE =
+      'mode-switch-btn flex-1 flex items-center justify-center gap-x-2 py-3 rounded-3xl text-sm font-semibold border transition-all';
+    const MODE_BTN_ACTIVE_TWIST =
+      ' bg-emerald-600/90 hover:bg-emerald-600 border-emerald-400 text-white shadow-sm';
+    const MODE_BTN_ACTIVE_MOVE =
+      ' bg-sky-600/90 hover:bg-sky-600 border-sky-400 text-white shadow-sm';
+    const MODE_BTN_INACTIVE =
+      ' bg-slate-800/60 border-slate-600/80 text-slate-500 opacity-50 hover:bg-slate-800/60 hover:text-slate-500';
+
+    function setBlockingActionBusy(busy) {
+      blockingActionBusy = !!busy;
+      updateMoveSpanControls();
+    }
+
+    function isActionAcceptedMessage(message) {
+      return typeof message === 'string' && message.includes('已接受');
+    }
+
+    function updateMoveSpanControls() {
+      const panel = document.getElementById('move-actions-panel');
+      if (!panel) return;
+
+      const inMoveMode = currentMode === 1;
+      const canSend = inMoveMode && !blockingActionBusy;
+
+      panel.querySelectorAll('input').forEach(el => {
+        el.disabled = !inMoveMode || blockingActionBusy;
+      });
+      panel.querySelectorAll('[data-action-send]').forEach(el => {
+        el.disabled = !canSend;
+      });
+      panel.querySelectorAll('[data-action-cancel]').forEach(el => {
+        el.disabled = !inMoveMode;
+      });
+
+      panel.classList.toggle('opacity-40', !inMoveMode);
+      panel.classList.toggle('pointer-events-none', !inMoveMode);
+      panel.classList.toggle('grayscale', !inMoveMode);
+    }
 
     function updateModeUI(mode) {
       currentMode = mode;
@@ -610,30 +778,73 @@
       if (mode === 0) {
         badge.textContent = 'TWIST';
         badge.className = 'mode-badge bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-        btnTwist.classList.add('!bg-emerald-600/90', 'border-emerald-400');
-        btnTwist.classList.remove('bg-slate-700');
-        btnMove.classList.remove('!bg-emerald-600/90', 'border-emerald-400');
-        btnMove.classList.add('bg-slate-700');
+        btnTwist.className = MODE_BTN_BASE + MODE_BTN_ACTIVE_TWIST;
+        btnMove.className = MODE_BTN_BASE + MODE_BTN_INACTIVE;
+        setBlockingActionBusy(false);
       } else {
         badge.textContent = 'MOVE';
         badge.className = 'mode-badge bg-sky-500/20 text-sky-400 border border-sky-500/30';
-        btnMove.classList.add('!bg-sky-600/90', 'border-sky-400');
-        btnMove.classList.remove('bg-slate-700');
-        btnTwist.classList.remove('!bg-emerald-600/90', 'border-emerald-400');
-        btnTwist.classList.add('bg-slate-700');
+        btnTwist.className = MODE_BTN_BASE + MODE_BTN_INACTIVE;
+        btnMove.className = MODE_BTN_BASE + MODE_BTN_ACTIVE_MOVE;
       }
+      updateMoveSpanControls();
+    }
+
+    function updateCalibUI(fb = null) {
+      const map = {
+        z: document.getElementById('calib-z'),
+        j2: document.getElementById('calib-j2'),
+        j1: document.getElementById('calib-j1'),
+      };
+      ['z','j2','j1'].forEach(axis => {
+        const el = map[axis];
+        if (!el) return;
+        const done = calibState[axis === 'j1' ? 'j1' : axis];
+        if (done) {
+          el.textContent = '已完成';
+          el.className = 'mt-0.5 text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-600/80 text-emerald-100';
+        } else if (calibState.inProgress && fb && fb.completed_axis === axis) {
+          el.textContent = '进行中...';
+          el.className = 'mt-0.5 text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-600/80 text-yellow-100';
+        } else {
+          el.textContent = '未标定';
+          el.className = 'mt-0.5 text-xs font-medium px-2 py-0.5 rounded-full bg-slate-700 text-slate-300';
+        }
+      });
+    }
+
+    function startCalibrate() {
+      const btn = document.getElementById('btn-calibrate');
+      if (btn) btn.disabled = true;
+      calibState.inProgress = true;
+      updateCalibUI();
+      sendWS({ type: 'start_calibrate' });
+      log('已发送标定请求（请观察三轴状态实时更新）', 'info');
     }
 
     function handleServerMessage(msg) {
       if (msg.type === 'status') {
-        if (msg.mode !== undefined) updateModeUI(msg.mode);
+        if (!statusModeSynced && msg.mode !== undefined) {
+          statusModeSynced = true;
+          updateModeUI(msg.mode);
+        }
         if (msg.arm) {
           updateArmDisplay(msg.arm.z, msg.arm.j1, msg.arm.j2, false);
         }
         if (msg.twist) {
           updateTwistDisplay(msg.twist.linear_x, msg.twist.angular_z);
         }
-      } 
+        if (msg.heading) {
+          updateHeadingDisplay(msg.heading);
+        }
+        if (!statusActionBusySynced && msg.action_busy !== undefined) {
+          statusActionBusySynced = true;
+          setBlockingActionBusy(msg.action_busy);
+        }
+      }
+      else if (msg.type === 'imu_heading') {
+        updateHeadingDisplay(msg);
+      }
       else if (msg.type === 'twist') {
         updateTwistDisplay(msg.linear_x, msg.angular_z);
       }
@@ -645,30 +856,64 @@
         log(`模式已切换为 ${msg.mode === 0 ? 'TWIST (速度)' : 'MOVE (阻塞)'}`, 'success');
       }
       else if (msg.type === 'mode_result') {
+        if (msg.mode !== undefined) updateModeUI(msg.mode);
         log(`模式切换结果: ${msg.message || (msg.success ? '成功' : '失败')}`, msg.success ? 'success' : 'error');
       }
       else if (msg.type === 'move_feedback') {
-        const remain = msg.distance_remaining_m || 0;
-        const pct = Math.max(0, Math.min(100, (1 - remain / 2.0) * 100)); // rough
+        const remain = msg.distance_remaining_m ?? 0;
+        const goalDist = Math.max(Math.abs(lastMoveGoalDist), 1e-6);
+        const pct = Math.max(0, Math.min(100, (1 - remain / goalDist) * 100));
         document.getElementById('move-progress').style.width = pct + '%';
-        document.getElementById('move-remain').textContent = remain.toFixed(2) + ' m';
+        document.getElementById('move-remain').textContent = remain.toFixed(3) + ' m';
+        if (msg.left_encoder_pos !== undefined) {
+          document.getElementById('move-enc-l').textContent = String(msg.left_encoder_pos);
+        }
+        if (msg.right_encoder_pos !== undefined) {
+          document.getElementById('move-enc-r').textContent = String(msg.right_encoder_pos);
+        }
       }
       else if (msg.type === 'span_feedback') {
-        const remain = msg.angle_remaining_rad || 0;
-        const pct = Math.max(0, Math.min(100, (1 - Math.abs(remain) / 3.14) * 100));
+        const remainRad = msg.angle_remaining_rad || 0;
+        const goalRad = Math.max(Math.abs(degToRad(lastSpanGoalDeg)), 1e-6);
+        const pct = Math.max(0, Math.min(100, (1 - Math.abs(remainRad) / goalRad) * 100));
         document.getElementById('span-progress').style.width = pct + '%';
-        document.getElementById('span-remain').textContent = remain.toFixed(2) + ' rad';
+        document.getElementById('span-remain').textContent = Math.abs(radToDeg(remainRad)).toFixed(1) + '°';
       }
       else if (msg.type === 'action_result') {
+        const accepted = isActionAcceptedMessage(msg.message);
+        if (msg.action === 'move' || msg.action === 'span') {
+          setBlockingActionBusy(accepted);
+        }
         const success = msg.success ? '成功' : '失败';
         log(`${msg.action.toUpperCase()} ${success}：${msg.message || ''}`, msg.success ? 'success' : 'warn');
-        // reset progress on finish
-        if (msg.action === 'move') {
+        // 仅在到位/失败/取消后重置进度（Goal 已接受时不重置）
+        if (!accepted && msg.action === 'move') {
           document.getElementById('move-progress').style.width = '0%';
           document.getElementById('move-remain').textContent = '—';
-        } else if (msg.action === 'span') {
+          document.getElementById('move-enc-l').textContent = '—';
+          document.getElementById('move-enc-r').textContent = '—';
+        } else if (!accepted && msg.action === 'span') {
           document.getElementById('span-progress').style.width = '0%';
           document.getElementById('span-remain').textContent = '—';
+        } else if (msg.action === 'calibrate') {
+          if (msg.success) {
+            calibState = { z: true, j1: true, j2: true, inProgress: false };
+            updateCalibUI();
+          }
+          const btn = document.getElementById('btn-calibrate');
+          if (btn) btn.disabled = false;
+        }
+      }
+      else if (msg.type === 'calib_feedback') {
+        // 实时更新三个轴状态
+        if (msg.z_done) calibState.z = true;
+        if (msg.j1_done) calibState.j1 = true;
+        if (msg.j2_done) calibState.j2 = true;
+        calibState.inProgress = (msg.progress || 0) < 0.999;
+        updateCalibUI(msg);
+        if (msg.current_step) {
+          const stepEl = document.getElementById('calib-step');
+          if (stepEl) stepEl.textContent = msg.current_step;
         }
       }
       else if (msg.type === 'stopped') {
@@ -679,6 +924,18 @@
         if (lastPing) {
           const rtt = Date.now() - lastPing;
           document.getElementById('ws-latency').textContent = `${rtt}ms`;
+        }
+      }
+      else if (msg.type === 'panel_log_reset_result') {
+        if (msg.success) {
+          clearLog();
+          log(
+            `会话日志已重置：删除 ${msg.deleted_count ?? 0} 个历史文件` +
+            (msg.path ? `，新文件 ${msg.path}` : ''),
+            'success'
+          );
+        } else {
+          log('重置会话日志失败: ' + (msg.message || '未知错误'), 'error');
         }
       }
       else if (msg.type === 'error') {
@@ -728,7 +985,7 @@
         joystickSendInterval = setInterval(() => {
           if (joystickActive && wsConnected) {
             const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.15;
-            const maxAng = parseFloat(document.getElementById('ang-speed-slider').value) || 0.6;
+            const maxAng = getMaxAngRad();
             
             // y forward positive, x right positive -> angular positive (counter-clockwise convention)
             const lx = -currentJoystickVector.y * maxLin;  // forward = positive linear
@@ -805,7 +1062,7 @@
       if (holdInterval) clearInterval(holdInterval);
 
       const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.15;
-      const maxAng = parseFloat(document.getElementById('ang-speed-slider').value) || 0.6;
+      const maxAng = getMaxAngRad();
 
       function sendCurrent() {
         let lx = 0, az = 0;
@@ -838,8 +1095,8 @@
     // ===== ARM =====
     function updateArmDisplay(z, j1, j2, updateSliders = true) {
       document.getElementById('arm-z-val').textContent = Number(z).toFixed(1);
-      document.getElementById('arm-j1-val').textContent = Number(j1).toFixed(1);
-      document.getElementById('arm-j2-val').textContent = Number(j2).toFixed(1);
+      document.getElementById('arm-j1-val').textContent = Number(j1).toFixed(1) + '°';
+      document.getElementById('arm-j2-val').textContent = Number(j2).toFixed(1) + '°';
 
       if (updateSliders) {
         document.getElementById('arm-z-slider').value = z;
@@ -899,7 +1156,7 @@
 
     function updateTwistDisplay(lx, az) {
       const el = document.getElementById('twist-display');
-      el.textContent = `${Number(lx).toFixed(2)} m/s, ${Number(az).toFixed(2)} rad/s`;
+      el.textContent = `${Number(lx).toFixed(2)} m/s, ${radToDeg(az).toFixed(1)} °/s`;
       if (Math.abs(lx) < 0.001 && Math.abs(az) < 0.001) {
         el.classList.remove('text-emerald-400');
         el.classList.add('text-slate-400');
@@ -909,35 +1166,81 @@
       }
     }
 
+    function normalizeYawDeg(deg) {
+      let d = deg;
+      while (d > 180) d -= 360;
+      while (d < -180) d += 360;
+      return d;
+    }
+
+    function updateHeadingDisplay(heading) {
+      const textEl = document.getElementById('heading-display');
+      const arrowEl = document.getElementById('heading-arrow');
+      if (!textEl) return;
+      if (!heading || !heading.valid) {
+        textEl.textContent = '无数据';
+        if (arrowEl) arrowEl.style.transform = 'rotate(0deg)';
+        return;
+      }
+      const yawDeg = normalizeYawDeg(
+        Number(heading.yaw_deg ?? radToDeg(heading.yaw_rad || 0))
+      );
+      textEl.textContent = `${yawDeg.toFixed(1)}°`;
+      if (arrowEl) {
+        arrowEl.style.transform = `rotate(${yawDeg}deg)`;
+      }
+    }
+
     // ===== SPEED LIMITS =====
     function updateSpeedLimits() {
       const lin = parseFloat(document.getElementById('lin-speed-slider').value);
-      const ang = parseFloat(document.getElementById('ang-speed-slider').value);
+      const angDeg = parseFloat(document.getElementById('ang-speed-slider').value);
       document.getElementById('lin-speed-val').textContent = lin.toFixed(2) + ' m/s';
-      document.getElementById('ang-speed-val').textContent = ang.toFixed(2) + ' rad/s';
+      document.getElementById('ang-speed-val').textContent = Math.round(angDeg) + ' °/s';
     }
 
     // ===== MODE & ACTIONS =====
     function setDriveMode(mode) {
+      updateModeUI(mode);
       sendWS({ type: 'set_mode', mode: mode });
       log(`正在请求切换到底盘模式 ${mode === 0 ? 'TWIST' : 'MOVE'} ...`);
     }
 
     function sendMoveAction() {
+      if (currentMode !== 1) return;
+      if (blockingActionBusy) {
+        log('Move/Span 执行中，请等待到位或点击取消后再发送', 'warn');
+        return;
+      }
       const dist = parseFloat(document.getElementById('move-dist').value);
       const spd = parseFloat(document.getElementById('move-speed').value);
       if (!dist || !spd) return alert('请输入有效的距离和速度');
+      lastMoveGoalDist = Math.abs(dist);
+      setBlockingActionBusy(true);
       sendWS({ type: 'send_move', distance_m: dist, speed_mps: spd });
       log(`发送 ChassisMove: ${dist}m @ ${spd}m/s`);
       document.getElementById('move-progress').style.width = '5%';
     }
 
     function sendSpanAction() {
-      const ang = parseFloat(document.getElementById('span-angle').value);
-      const om = parseFloat(document.getElementById('span-omega').value);
-      if (!ang || !om) return alert('请输入有效的角度和角速度');
-      sendWS({ type: 'send_span', angle_rad: ang, omega_radps: om });
-      log(`发送 ChassisSpan: ${ang}rad @ ${om}rad/s`);
+      if (currentMode !== 1) return;
+      if (blockingActionBusy) {
+        log('Move/Span 执行中，请等待到位或点击取消后再发送', 'warn');
+        return;
+      }
+      const angDeg = parseFloat(document.getElementById('span-angle').value);
+      const omDeg = parseFloat(document.getElementById('span-omega').value);
+      if (!Number.isFinite(angDeg) || angDeg === 0 || !Number.isFinite(omDeg) || omDeg === 0) {
+        return alert('请输入有效的角度 (°) 和角速度 (°/s)');
+      }
+      lastSpanGoalDeg = Math.abs(angDeg);
+      setBlockingActionBusy(true);
+      sendWS({
+        type: 'send_span',
+        angle_rad: degToRad(angDeg),
+        omega_radps: degToRad(omDeg),
+      });
+      log(`发送 ChassisSpan: ${angDeg}° @ ${omDeg}°/s`);
       document.getElementById('span-progress').style.width = '5%';
     }
 
@@ -962,7 +1265,7 @@
         keys[e.key] = true;
 
         const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.15;
-        const maxAng = parseFloat(document.getElementById('ang-speed-slider').value) || 0.6;
+        const maxAng = getMaxAngRad();
 
         if (e.key.toLowerCase() === 'w') sendWS({type:'set_twist', linear_x: maxLin, angular_z: 0});
         if (e.key.toLowerCase() === 's') sendWS({type:'set_twist', linear_x: -maxLin, angular_z: 0});
@@ -987,6 +1290,12 @@
 
       // initial arm display
       updateArmDisplay(50, 90, 90, true);
+
+      // initial calib UI
+      updateCalibUI();
+
+      // TWIST 为默认模式：阻塞 Action 控件置灰
+      updateModeUI(0);
 
       // connect WS
       connectWebSocket();

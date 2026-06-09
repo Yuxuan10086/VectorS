@@ -60,8 +60,14 @@ RobotArm::RobotArm(robot_driver::CanInterface & can, ScaraArmParams params)
 
 RobotArm::~RobotArm() = default;
 
-bool RobotArm::calibrate()
+bool RobotArm::calibrate(std::function<void(const std::string & axis)> on_axis_complete)
 {
+  auto notify = [&](const char * axis) {
+    if (on_axis_complete) {
+      on_axis_complete(std::string(axis));
+    }
+  };
+
   if (!jz_->bump(0, torque_z_up_ma_)) {
     print_calib_fail("Z bump forward", jz_->motor());
     return false;
@@ -81,6 +87,7 @@ bool RobotArm::calibrate()
     print_calib_fail("Z set_position", jz_->motor());
     return false;
   }
+  notify("z");   // Z 轴标定完成
 
   if (!j1_->bump(1, torque_j1_ma_)) {
     print_calib_fail("J1 bump reverse", j1_->motor());
@@ -103,6 +110,7 @@ bool RobotArm::calibrate()
   }
 
   (void)j2_->set_position(j2_->span_max() / 2.0);
+  notify("j2");  // J2 轴标定完成
 
   if (!j1_->bump(0, torque_j1_ma_)) {
     print_calib_fail("J1 bump forward", j1_->motor());
@@ -116,6 +124,8 @@ bool RobotArm::calibrate()
     return false;
   }
   j1_->set_position(j1_->span_max() / 2.0);
+  notify("j1");  // J1 轴标定完成
+
   return true;
 }
 

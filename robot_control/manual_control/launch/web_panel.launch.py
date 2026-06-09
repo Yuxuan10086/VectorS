@@ -24,6 +24,11 @@ def generate_launch_description():
             description='Twist topic for chassis velocity'
         ),
         DeclareLaunchArgument(
+            'imu_topic',
+            default_value='/imu/data_raw',
+            description='IMU topic for chassis heading (1-DOF yaw)'
+        ),
+        DeclareLaunchArgument(
             'arm_joint_command_topic',
             default_value='/arm/joint_command',
             description='JointState topic for arm position commands'
@@ -38,6 +43,16 @@ def generate_launch_description():
             default_value='0.6',
             description='Default max angular speed (rad/s)'
         ),
+        DeclareLaunchArgument(
+            'panel_log_enable',
+            default_value='false',
+            description='Write JSON session log for MOVE/cancel debugging (default off)'
+        ),
+        DeclareLaunchArgument(
+            'panel_log_dir',
+            default_value='~/robot_ws/log/web_panel',
+            description='Directory for panel session logs when panel_log_enable is true'
+        ),
 
         Node(
             package='manual_control',
@@ -48,9 +63,12 @@ def generate_launch_description():
                 'web_host': LaunchConfiguration('web_host'),
                 'web_port': LaunchConfiguration('web_port'),
                 'chassis_cmd_vel_topic': LaunchConfiguration('chassis_cmd_vel_topic'),
+                'imu_topic': LaunchConfiguration('imu_topic'),
                 'arm_joint_command_topic': LaunchConfiguration('arm_joint_command_topic'),
                 'linear_speed_x': LaunchConfiguration('linear_speed_x'),
                 'angular_speed_z': LaunchConfiguration('angular_speed_z'),
+                'panel_log_enable': LaunchConfiguration('panel_log_enable'),
+                'panel_log_dir': LaunchConfiguration('panel_log_dir'),
             }],
         ),
     ])
