@@ -53,6 +53,8 @@ public:
   std::optional<int16_t> rpm();
   std::optional<int32_t> pos();
   std::optional<bool> stall_flag();
+  /** 手册 0x30：读取到位标志（轻量，播放热路径用） */
+  std::optional<bool> arrived_flag();
   std::optional<std::int16_t> stall_current_setting_ma();
   std::optional<std::int16_t> phase_current_ma();
 

@@ -4,21 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>机器人控制面板 · Web Teleop</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <script src="/static/js/tailwindcss.min.js"></script>
+  <link rel="stylesheet" href="/static/css/font-awesome.min.css">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;display=swap');
-    
     :root {
       --accent: #3b82f6;
     }
     
     body {
-      font-family: 'Inter', system_ui, sans-serif;
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
     }
     
     .font-display {
-      font-family: 'Space Grotesk', 'Inter', system_ui, sans-serif;
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
       font-weight: 600;
     }
 
@@ -333,8 +331,25 @@
           <div class="text-xs px-2 py-0.5 bg-slate-800 rounded-2xl text-slate-400">JointState</div>
         </div>
 
-        <!-- Arm Sliders -->
-        <div class="space-y-4">
+        <!-- 机械臂控制模式（仅前端限制） -->
+        <div class="mb-4">
+          <div class="text-[10px] text-slate-400 mb-1.5 px-0.5">控制模式</div>
+          <div class="flex gap-2">
+            <button id="btn-arm-mode-angle"
+                    onclick="setArmControlMode('angle')"
+                    class="arm-mode-btn flex-1 py-2 text-xs font-semibold rounded-2xl border border-sky-500/60 bg-sky-500/20 text-sky-200">
+              角度模式
+            </button>
+            <button id="btn-arm-mode-action"
+                    onclick="setArmControlMode('action')"
+                    class="arm-mode-btn flex-1 py-2 text-xs font-semibold rounded-2xl border border-slate-700 bg-slate-800 text-slate-400">
+              动作模式
+            </button>
+          </div>
+        </div>
+
+        <!-- 角度模式：拉杆控制 -->
+        <div id="arm-angle-controls" class="space-y-4">
           <!-- Z -->
           <div>
             <div class="flex justify-between text-xs mb-1 px-0.5">
@@ -388,18 +403,53 @@
               </div>
             </div>
           </div>
+
+          <div class="mt-3 flex gap-2">
+            <button onclick="applyArmDirect()"
+                    class="flex-1 text-xs py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-2xl flex items-center justify-center gap-x-2 text-slate-200">
+              <i class="fa-solid fa-check-double text-xs"></i>
+              <span>直接设置数值</span>
+            </button>
+            <button onclick="resetArmToInit()"
+                    class="text-xs px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-2xl text-slate-300">
+              <i class="fa-solid fa-undo"></i>
+            </button>
+          </div>
         </div>
 
-        <div class="mt-3 flex gap-2">
-          <button onclick="applyArmDirect()"
-                  class="flex-1 text-xs py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-2xl flex items-center justify-center gap-x-2 text-slate-200">
-            <i class="fa-solid fa-check-double text-xs"></i>
-            <span>直接设置数值</span>
-          </button>
-          <button onclick="resetArmToInit()"
-                  class="text-xs px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-2xl text-slate-300">
-            <i class="fa-solid fa-undo"></i>
-          </button>
+        <!-- 动作模式：录制与播放 -->
+        <div id="arm-action-controls" class="hidden space-y-4">
+          <div class="bg-slate-900/70 border border-slate-700 rounded-2xl p-3">
+            <div class="text-xs text-slate-300 mb-2 font-medium">动作录制（J1/J2 零力矩拖动）</div>
+            <div class="flex gap-2 mb-2">
+              <input id="motion-action-name" type="text" placeholder="动作名称，如 pick"
+                     class="flex-1 bg-slate-950 border border-slate-600 focus:border-violet-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
+            </div>
+            <div class="flex gap-2">
+              <button id="btn-motion-record-start" onclick="startMotionRecord()"
+                      class="flex-1 text-xs py-2 bg-violet-700 hover:bg-violet-600 rounded-2xl font-medium whitespace-nowrap disabled:opacity-40">
+                开始录制
+              </button>
+              <button id="btn-motion-record-finish" onclick="finishMotionRecord()"
+                      class="flex-1 text-xs py-2 bg-slate-700 hover:bg-violet-700 rounded-2xl font-medium whitespace-nowrap disabled:opacity-40">
+                结束录制
+              </button>
+            </div>
+            <div id="motion-record-status" class="mt-2 text-[10px] text-slate-500 min-h-[1rem]"></div>
+          </div>
+
+            <div class="bg-slate-900/70 border border-slate-700 rounded-2xl p-3">
+            <div class="text-xs text-slate-300 mb-2 font-medium">已保存动作</div>
+            <div id="arm-motion-buttons" class="flex flex-wrap gap-2">
+              <span class="text-[10px] text-slate-500">暂无动作文件</span>
+            </div>
+            <div id="motion-play-progress-wrap" class="hidden mt-3">
+              <div class="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div id="motion-play-progress" class="h-full bg-violet-500 transition-all duration-300" style="width:0%"></div>
+              </div>
+              <div id="motion-play-status" class="mt-1.5 text-[10px] text-violet-300/90 min-h-[1rem]"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -728,6 +778,17 @@
     let statusActionBusySynced = false;
     // 标定状态
     let calibState = { z: false, j1: false, j2: false, inProgress: false };
+    /** 机械臂前端控制模式：angle=拉杆，action=动作录制/播放 */
+    let armControlMode = 'angle';
+    let motionRecording = false;
+    let motionPlaying = false;
+    let motionPlayAction = '';
+    let motionRecordPending = false;
+    let motionPlayPending = false;
+    let motionDeletePending = false;
+    let motionDeleteAction = '';
+    let motionDeleteTimer = null;
+    let armMotionActions = [];
 
     const MODE_BTN_BASE =
       'mode-switch-btn flex-1 flex items-center justify-center gap-x-2 py-3 rounded-3xl text-sm font-semibold border transition-all';
@@ -841,6 +902,41 @@
           statusActionBusySynced = true;
           setBlockingActionBusy(msg.action_busy);
         }
+        if (msg.arm_motions) {
+          updateArmMotionButtons(msg.arm_motions);
+        }
+        if (msg.motion_recording !== undefined) {
+          motionRecording = !!msg.motion_recording;
+          updateMotionRecordUI();
+          updateArmMotionButtonsDisabled();
+        }
+        if (msg.motion_playing !== undefined) {
+          motionPlaying = !!msg.motion_playing;
+          if (!motionPlaying) motionPlayPending = false;
+          updateArmMotionButtonsDisabled();
+          updateMotionRecordUI();
+        }
+      }
+      else if (msg.type === 'arm_motions') {
+        if (msg.actions) {
+          updateArmMotionButtons(msg.actions);
+          if (motionDeletePending && motionDeleteAction) {
+            const stillThere = msg.actions.includes(motionDeleteAction);
+            if (!stillThere) {
+              clearMotionDeletePending('动作已删除');
+            }
+          }
+        }
+        if (msg.recording !== undefined) {
+          motionRecording = !!msg.recording;
+          updateMotionRecordUI();
+        }
+        if (msg.playing !== undefined) {
+          motionPlaying = !!msg.playing;
+          if (!motionPlaying) motionPlayPending = false;
+          updateArmMotionButtonsDisabled();
+          updateMotionRecordUI();
+        }
       }
       else if (msg.type === 'imu_heading') {
         updateHeadingDisplay(msg);
@@ -902,7 +998,53 @@
           }
           const btn = document.getElementById('btn-calibrate');
           if (btn) btn.disabled = false;
+        } else if (msg.action === 'motion_record') {
+          motionRecordPending = false;
+          if (msg.recording !== undefined) motionRecording = !!msg.recording;
+          updateMotionRecordUI();
+          updateArmMotionButtonsDisabled();
+          log(`录制: ${msg.message || (msg.success ? '成功' : '失败')}`, msg.success ? 'success' : 'error');
+        } else if (msg.action === 'play_motion') {
+          motionPlayPending = false;
+          motionPlaying = false;
+          motionPlayAction = '';
+          updateMotionPlayProgressUI(0, '');
+          setMotionPlayProgressVisible(false);
+          updateArmMotionButtonsDisabled();
+          updateMotionRecordUI();
+          log(`播放${msg.success ? '成功' : '失败'}：${msg.message || ''}`, msg.success ? 'success' : 'error');
+        } else if (msg.action === 'delete_motion') {
+          clearMotionDeletePending(msg.message || (msg.success ? '删除成功' : '删除失败'), msg.success);
         }
+      }
+      else if (msg.type === 'play_motion_ack') {
+        motionPlayPending = false;
+        motionPlaying = true;
+        motionPlayAction = msg.action_name || '';
+        setMotionPlayProgressVisible(true);
+        updateMotionPlayProgressUI(0, msg.message || `开始播放「${motionPlayAction}」`);
+        updateArmMotionButtonsDisabled();
+        updateMotionRecordUI();
+        log(msg.message || `播放动作: ${motionPlayAction}`, 'info');
+      }
+      else if (msg.type === 'play_motion_feedback') {
+        motionPlaying = true;
+        if (msg.action) motionPlayAction = msg.action;
+        setMotionPlayProgressVisible(true);
+        const pct = Math.max(0, Math.min(100, (msg.progress || 0) * 100));
+        let detail = msg.message || '';
+        if (msg.phase === 'waiting_first_arrived') {
+          detail = detail || '等待首点到位…';
+        } else if (msg.phase === 'playing' && msg.index && msg.total) {
+          detail = detail || `播放中 ${msg.index}/${msg.total}`;
+        }
+        updateMotionPlayProgressUI(pct, detail);
+        if (msg.span_j1 !== undefined && msg.span_j2 !== undefined) {
+          const z = msg.z !== undefined ? msg.z : parseFloat(document.getElementById('arm-z-val')?.textContent || '0');
+          updateArmDisplay(z, msg.span_j1, msg.span_j2, false);
+        }
+        updateArmMotionButtonsDisabled();
+        updateMotionRecordUI();
       }
       else if (msg.type === 'calib_feedback') {
         // 实时更新三个轴状态
@@ -940,6 +1082,13 @@
       }
       else if (msg.type === 'error') {
         log('后端错误: ' + msg.message, 'error');
+        if (motionDeletePending) {
+          clearMotionDeletePending(msg.message || '删除失败', false);
+        }
+        if (motionRecordPending) {
+          motionRecordPending = false;
+          updateMotionRecordUI();
+        }
       }
     }
 
@@ -987,9 +1136,9 @@
             const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.15;
             const maxAng = getMaxAngRad();
             
-            // y forward positive, x right positive -> angular positive (counter-clockwise convention)
-            const lx = -currentJoystickVector.y * maxLin;  // forward = positive linear
-            const az = currentJoystickVector.x * maxAng;
+            // 屏幕坐标：上=前进、左=左转（与方向键 / ROS angular.z 一致）
+            const lx = -currentJoystickVector.y * maxLin;
+            const az = -currentJoystickVector.x * maxAng;
             
             sendWS({ type: 'set_twist', linear_x: lx, angular_z: az });
           }
@@ -1093,6 +1242,239 @@
     }
 
     // ===== ARM =====
+    function setArmControlMode(mode) {
+      armControlMode = mode === 'action' ? 'action' : 'angle';
+      const anglePanel = document.getElementById('arm-angle-controls');
+      const actionPanel = document.getElementById('arm-action-controls');
+      const btnAngle = document.getElementById('btn-arm-mode-angle');
+      const btnAction = document.getElementById('btn-arm-mode-action');
+      const angleActive = armControlMode === 'angle';
+
+      if (anglePanel) {
+        anglePanel.classList.toggle('hidden', !angleActive);
+        anglePanel.classList.toggle('opacity-40', !angleActive);
+        anglePanel.classList.toggle('pointer-events-none', !angleActive);
+      }
+      if (actionPanel) {
+        actionPanel.classList.toggle('hidden', angleActive);
+      }
+      if (btnAngle) {
+        btnAngle.className = angleActive
+          ? 'arm-mode-btn flex-1 py-2 text-xs font-semibold rounded-2xl border border-sky-500/60 bg-sky-500/20 text-sky-200'
+          : 'arm-mode-btn flex-1 py-2 text-xs font-semibold rounded-2xl border border-slate-700 bg-slate-800 text-slate-400';
+      }
+      if (btnAction) {
+        btnAction.className = !angleActive
+          ? 'arm-mode-btn flex-1 py-2 text-xs font-semibold rounded-2xl border border-violet-500/60 bg-violet-500/20 text-violet-200'
+          : 'arm-mode-btn flex-1 py-2 text-xs font-semibold rounded-2xl border border-slate-700 bg-slate-800 text-slate-400';
+      }
+      updateMotionRecordUI();
+      updateArmMotionButtonsDisabled();
+    }
+
+    function setMotionPlayProgressVisible(show) {
+      const wrap = document.getElementById('motion-play-progress-wrap');
+      if (wrap) wrap.classList.toggle('hidden', !show);
+    }
+
+    function updateMotionPlayProgressUI(pct, message) {
+      const bar = document.getElementById('motion-play-progress');
+      const status = document.getElementById('motion-play-status');
+      if (bar) bar.style.width = `${pct}%`;
+      if (status) status.textContent = message || '';
+    }
+
+    function armMotionButtonsDisabled() {
+      return motionRecording || motionPlaying || motionPlayPending || motionRecordPending
+        || motionDeletePending || armControlMode !== 'action';
+    }
+
+    function updateArmMotionButtonsDisabled() {
+      const container = document.getElementById('arm-motion-buttons');
+      if (!container) return;
+      const disabled = armMotionButtonsDisabled();
+      container.querySelectorAll('button[data-motion-name]').forEach(btn => {
+        btn.disabled = disabled;
+      });
+      container.querySelectorAll('button[data-motion-delete]').forEach(btn => {
+        btn.disabled = disabled;
+      });
+    }
+
+    function updateArmMotionButtons(actions) {
+      const newActions = Array.isArray(actions) ? actions.slice() : [];
+      const sameList = newActions.length === armMotionActions.length
+        && newActions.every((name, i) => name === armMotionActions[i]);
+      armMotionActions = newActions;
+
+      const container = document.getElementById('arm-motion-buttons');
+      if (!container) return;
+
+      if (sameList && container.querySelectorAll('[data-motion-row]').length === armMotionActions.length) {
+        updateArmMotionButtonsDisabled();
+        return;
+      }
+
+      container.innerHTML = '';
+      if (!armMotionActions.length) {
+        container.innerHTML = '<span class="text-[10px] text-slate-500">暂无动作文件</span>';
+        return;
+      }
+
+      const disabled = armMotionButtonsDisabled();
+      armMotionActions.forEach(name => {
+        const row = document.createElement('div');
+        row.className = 'inline-flex items-center gap-1';
+        row.dataset.motionRow = name;
+
+        const playBtn = document.createElement('button');
+        playBtn.type = 'button';
+        playBtn.dataset.motionName = name;
+        playBtn.textContent = name;
+        playBtn.disabled = disabled;
+        playBtn.className = 'text-xs px-3 py-2 min-h-[2rem] bg-violet-800/80 hover:bg-violet-600 border border-violet-600/50 rounded-xl disabled:opacity-40';
+        playBtn.addEventListener('click', () => playArmMotion(name));
+
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.dataset.motionDelete = name;
+        delBtn.title = `删除「${name}」`;
+        delBtn.disabled = disabled;
+        delBtn.className = 'text-xs px-2 py-2 min-h-[2rem] min-w-[2rem] bg-slate-800/90 hover:bg-red-700/80 border border-slate-600/60 rounded-xl text-slate-400 hover:text-red-100 disabled:opacity-40';
+        delBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+        delBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          deleteArmMotion(name);
+        });
+
+        row.appendChild(playBtn);
+        row.appendChild(delBtn);
+        container.appendChild(row);
+      });
+    }
+
+    function updateMotionRecordUI() {
+      const startBtn = document.getElementById('btn-motion-record-start');
+      const finishBtn = document.getElementById('btn-motion-record-finish');
+      const statusEl = document.getElementById('motion-record-status');
+      const nameInput = document.getElementById('motion-action-name');
+      const inActionMode = armControlMode === 'action';
+      const busy = motionPlaying || motionPlayPending || motionRecordPending || motionDeletePending;
+
+      if (startBtn) startBtn.disabled = !inActionMode || motionRecording || busy;
+      if (finishBtn) finishBtn.disabled = !inActionMode || !motionRecording || busy;
+      if (nameInput) nameInput.disabled = !inActionMode || motionRecording || busy;
+      if (statusEl) {
+        if (motionRecordPending) statusEl.textContent = '正在启动录制…';
+        else if (motionPlayPending) {
+          const label = motionPlayAction ? `正在请求播放「${motionPlayAction}」…` : '正在请求播放…';
+          statusEl.textContent = label;
+        }
+        else if (motionDeletePending) statusEl.textContent = '正在删除动作…';
+        else if (motionRecording) statusEl.textContent = '录制中：拖动 J1/J2，完成后点击结束录制';
+        else if (motionPlaying) {
+          const label = motionPlayAction ? `正在播放「${motionPlayAction}」…` : '正在播放动作…';
+          statusEl.textContent = label;
+        }
+        else statusEl.textContent = inActionMode ? '输入动作名后开始录制' : '请切换到动作模式';
+      }
+    }
+
+    function startMotionRecord() {
+      if (armControlMode !== 'action') {
+        log('请先切换到动作模式', 'warn');
+        return;
+      }
+      const name = (document.getElementById('motion-action-name')?.value || '').trim();
+      if (!name) {
+        log('请输入动作名称', 'warn');
+        return;
+      }
+      motionRecordPending = true;
+      updateMotionRecordUI();
+      if (!sendWS({ type: 'start_motion_record', action_name: name })) {
+        motionRecordPending = false;
+        updateMotionRecordUI();
+        return;
+      }
+      log(`请求开始录制: ${name}`, 'info');
+    }
+
+    function finishMotionRecord() {
+      if (armControlMode !== 'action') return;
+      motionRecordPending = true;
+      updateMotionRecordUI();
+      if (!sendWS({ type: 'finish_motion_record' })) {
+        motionRecordPending = false;
+        updateMotionRecordUI();
+        return;
+      }
+      log('请求结束录制…', 'info');
+    }
+
+    function playArmMotion(name) {
+      if (armControlMode !== 'action') {
+        log('请先切换到动作模式', 'warn');
+        return;
+      }
+      if (motionRecording || motionPlaying || motionPlayPending || motionRecordPending) {
+        log('当前正在录制或播放动作', 'warn');
+        return;
+      }
+      if (!sendWS({ type: 'play_arm_motion', action_name: name })) {
+        return;
+      }
+      motionPlayPending = true;
+      motionPlayAction = name;
+      setMotionPlayProgressVisible(true);
+      updateMotionPlayProgressUI(0, `请求播放「${name}」…`);
+      updateArmMotionButtonsDisabled();
+      updateMotionRecordUI();
+      log(`播放动作: ${name}`, 'info');
+    }
+
+    function clearMotionDeletePending(logMessage, success) {
+      motionDeletePending = false;
+      motionDeleteAction = '';
+      if (motionDeleteTimer) {
+        clearTimeout(motionDeleteTimer);
+        motionDeleteTimer = null;
+      }
+      updateArmMotionButtonsDisabled();
+      updateMotionRecordUI();
+      if (logMessage) {
+        log(logMessage, success ? 'success' : 'error');
+      }
+    }
+
+    function deleteArmMotion(name) {
+      if (armControlMode !== 'action') {
+        log('请先切换到动作模式', 'warn');
+        return;
+      }
+      if (motionRecording || motionPlaying || motionPlayPending || motionRecordPending || motionDeletePending) {
+        log('当前正在录制、播放或删除动作', 'warn');
+        return;
+      }
+      if (!confirm(`确定删除动作「${name}」？将删除该名称下的全部 CSV 文件，且不可恢复。`)) {
+        return;
+      }
+      if (!sendWS({ type: 'delete_arm_motion', action_name: name })) {
+        return;
+      }
+      motionDeletePending = true;
+      motionDeleteAction = name;
+      updateArmMotionButtonsDisabled();
+      updateMotionRecordUI();
+      log(`请求删除动作: ${name}`, 'info');
+      if (motionDeleteTimer) clearTimeout(motionDeleteTimer);
+      motionDeleteTimer = setTimeout(() => {
+        if (motionDeletePending) {
+          clearMotionDeletePending('删除动作超时，请刷新页面后重试', false);
+        }
+      }, 15000);
+    }
+
     function updateArmDisplay(z, j1, j2, updateSliders = true) {
       document.getElementById('arm-z-val').textContent = Number(z).toFixed(1);
       document.getElementById('arm-j1-val').textContent = Number(j1).toFixed(1) + '°';
@@ -1106,6 +1488,7 @@
     }
 
     function onArmSliderInput(axis) {
+      if (armControlMode !== 'angle') return;
       const z = parseFloat(document.getElementById('arm-z-slider').value);
       const j1 = parseFloat(document.getElementById('arm-j1-slider').value);
       const j2 = parseFloat(document.getElementById('arm-j2-slider').value);
@@ -1117,6 +1500,7 @@
     }
 
     function armStep(axis, delta) {
+      if (armControlMode !== 'angle') return;
       let z = parseFloat(document.getElementById('arm-z-slider').value);
       let j1 = parseFloat(document.getElementById('arm-j1-slider').value);
       let j2 = parseFloat(document.getElementById('arm-j2-slider').value);
@@ -1138,6 +1522,7 @@
     }
 
     function applyArmDirect() {
+      if (armControlMode !== 'angle') return;
       const z = parseFloat(document.getElementById('arm-z-slider').value);
       const j1 = parseFloat(document.getElementById('arm-j1-slider').value);
       const j2 = parseFloat(document.getElementById('arm-j2-slider').value);
@@ -1146,6 +1531,7 @@
     }
 
     function resetArmToInit() {
+      if (armControlMode !== 'angle') return;
       const initZ = 50, initJ1 = 90, initJ2 = 90;
       document.getElementById('arm-z-slider').value = initZ;
       document.getElementById('arm-j1-slider').value = initJ1;
@@ -1293,6 +1679,9 @@
 
       // initial calib UI
       updateCalibUI();
+
+      // 机械臂默认角度模式
+      setArmControlMode('angle');
 
       // TWIST 为默认模式：阻塞 Action 控件置灰
       updateModeUI(0);

@@ -1,0 +1,4 @@
+# 结束录制并写入 scara_arm/recordings/ CSV
+---
+bool success
+string message

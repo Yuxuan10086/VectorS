@@ -8,7 +8,10 @@
 #include "robot_interfaces/action/chassis_move.hpp"
 #include "robot_interfaces/action/chassis_span.hpp"
 #include "robot_interfaces/action/arm_calibrate.hpp"
-#include "robot_driver/pd42_motor.hpp"
+#include "robot_interfaces/action/arm_play_motion.hpp"
+#include "robot_interfaces/srv/start_arm_motion_recording.hpp"
+#include "robot_interfaces/srv/finish_arm_motion_recording.hpp"
+#include "scara_arm/motion_playback.hpp"
 
 #include <geometry_msgs/msg/twist.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -24,6 +27,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -33,6 +38,84 @@
 
 namespace
 {
+
+/** 将 worker 线程中的 rclcpp / action 调用投递到 executor 定时器里执行。 */
+class MainThreadTaskQueue
+{
+public:
+  void push(std::function<void()> task)
+  {
+    if (!task) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(mu_);
+    tasks_.push_back(std::move(task));
+  }
+
+  void drain()
+  {
+    std::vector<std::function<void()>> batch;
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      batch.swap(tasks_);
+    }
+    for (auto & task : batch) {
+      if (task) {
+        task();
+      }
+    }
+  }
+
+private:
+  std::mutex mu_;
+  std::vector<std::function<void()>> tasks_;
+};
+
+template<typename FeedbackMsg, typename GoalHandle>
+class ActionFeedbackRelay
+{
+public:
+  void bind(std::shared_ptr<GoalHandle> handle)
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    handle_ = std::move(handle);
+    active_ = true;
+  }
+
+  void update(const FeedbackMsg & fb)
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    latest_ = fb;
+  }
+
+  void publish_pending()
+  {
+    std::shared_ptr<GoalHandle> handle;
+    FeedbackMsg fb{};
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      if (!active_ || !handle_) {
+        return;
+      }
+      handle = handle_;
+      fb = latest_;
+    }
+    handle->publish_feedback(std::make_shared<FeedbackMsg>(fb));
+  }
+
+  void clear()
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    active_ = false;
+    handle_.reset();
+  }
+
+private:
+  std::mutex mu_;
+  std::shared_ptr<GoalHandle> handle_;
+  FeedbackMsg latest_{};
+  bool active_{false};
+};
 
 bool twist_finite(const geometry_msgs::msg::Twist & t)
 {
@@ -98,6 +181,65 @@ std::string arm_set_position_failure_detail(
       << ", j1=" << (j1_oob ? "Y" : "N")
       << ", j2=" << (j2_oob ? "Y" : "N") << "]";
   return oss.str();
+}
+
+scara_arm::MotionPlaybackParams load_motion_playback_params(rclcpp::Node & node)
+{
+  scara_arm::MotionPlaybackParams p;
+  if (!node.has_parameter("playback_window_k")) {
+    node.declare_parameter("playback_window_k", 2);
+  }
+  if (!node.has_parameter("playback_arrived_poll_ms")) {
+    node.declare_parameter("playback_arrived_poll_ms", 20);
+  }
+  if (!node.has_parameter("playback_arrived_timeout_sec")) {
+    node.declare_parameter("playback_arrived_timeout_sec", 15.0);
+  }
+  if (!node.has_parameter("playback_rpm_min")) {
+    node.declare_parameter("playback_rpm_min", 5);
+  }
+  if (!node.has_parameter("playback_stationary_span_eps")) {
+    node.declare_parameter("playback_stationary_span_eps", 0.05);
+  }
+  if (!node.has_parameter("playback_acc_span_per_s2_max")) {
+    node.declare_parameter("playback_acc_span_per_s2_max", 500.0);
+  }
+  if (!node.has_parameter("playback_accel_min")) {
+    node.declare_parameter("playback_accel_min", 5);
+  }
+  if (!node.has_parameter("playback_accel_max")) {
+    node.declare_parameter("playback_accel_max", 40);
+  }
+  if (!node.has_parameter("playback_segment_time_min_sec")) {
+    node.declare_parameter("playback_segment_time_min_sec", 0.05);
+  }
+  p.window_k = node.get_parameter("playback_window_k").as_int();
+  p.arrived_poll_ms = node.get_parameter("playback_arrived_poll_ms").as_int();
+  p.arrived_timeout_sec = node.get_parameter("playback_arrived_timeout_sec").as_double();
+  p.rpm_min = static_cast<std::uint16_t>(node.get_parameter("playback_rpm_min").as_int());
+  p.stationary_span_eps = node.get_parameter("playback_stationary_span_eps").as_double();
+  p.acc_span_per_s2_max = node.get_parameter("playback_acc_span_per_s2_max").as_double();
+  p.accel_min = static_cast<std::uint8_t>(node.get_parameter("playback_accel_min").as_int());
+  p.accel_max = static_cast<std::uint8_t>(node.get_parameter("playback_accel_max").as_int());
+  p.segment_time_min_sec = node.get_parameter("playback_segment_time_min_sec").as_double();
+  return p;
+}
+
+std::string motion_play_phase_string(scara_arm::MotionPlayPhase phase)
+{
+  switch (phase) {
+    case scara_arm::MotionPlayPhase::Loading:
+      return "loading";
+    case scara_arm::MotionPlayPhase::WaitingFirstArrived:
+      return "waiting_first_arrived";
+    case scara_arm::MotionPlayPhase::Playing:
+      return "playing";
+    case scara_arm::MotionPlayPhase::Done:
+      return "done";
+    case scara_arm::MotionPlayPhase::Error:
+      return "error";
+  }
+  return "error";
 }
 
 robot_interfaces::msg::MotorState fill_motor_state_msg(
@@ -179,6 +321,22 @@ int main(int argc, char ** argv)
     rclcpp::shutdown();
     return 1;
   }
+
+  MainThreadTaskQueue main_thread_tasks;
+  using ChassisMove = robot_interfaces::action::ChassisMove;
+  using GoalHandleMove = rclcpp_action::ServerGoalHandle<ChassisMove>;
+  using ChassisSpan = robot_interfaces::action::ChassisSpan;
+  using GoalHandleSpan = rclcpp_action::ServerGoalHandle<ChassisSpan>;
+  ActionFeedbackRelay<ChassisMove::Feedback, GoalHandleMove> move_feedback_relay;
+  ActionFeedbackRelay<ChassisSpan::Feedback, GoalHandleSpan> span_feedback_relay;
+
+  node->create_wall_timer(
+    std::chrono::milliseconds(20),
+    [&main_thread_tasks, &move_feedback_relay, &span_feedback_relay]() {
+      main_thread_tasks.drain();
+      move_feedback_relay.publish_pending();
+      span_feedback_relay.publish_pending();
+    });
 
   std::unordered_map<std::uint8_t, robot_driver::Pd42Motor *> motors_by_id;
   {
@@ -297,6 +455,9 @@ int main(int argc, char ** argv)
       if (!msg) {
         return;
       }
+      if (platform.arm().is_motion_recording() || platform.arm().is_motion_playing()) {
+        return;
+      }
       const auto spans = spans_from_joint_state(*msg, arm_joint_names);
       if (!spans) {
         RCLCPP_WARN_THROTTLE(
@@ -409,8 +570,6 @@ int main(int argc, char ** argv)
   auto chassis_action_cb_group = node->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
   // ChassisMove Action：仅在 kMove 模式下接受，Feedback 使用与 Goal 同单位的剩余距离
-  using ChassisMove = robot_interfaces::action::ChassisMove;
-  using GoalHandleMove = rclcpp_action::ServerGoalHandle<ChassisMove>;
   auto chassis_move_server = rclcpp_action::create_server<ChassisMove>(
     node,
     "/chassis/move",
@@ -432,55 +591,64 @@ int main(int argc, char ** argv)
       return rclcpp_action::CancelResponse::ACCEPT;
     },
     // accepted callback：工作线程执行 move，本回调立即返回以便 cancel 可并发执行
-    [&platform, node, &map_x, &map_y](const std::shared_ptr<GoalHandleMove> goal_handle) {
+    [&platform, node, &map_x, &map_y, &main_thread_tasks, &move_feedback_relay](
+      const std::shared_ptr<GoalHandleMove> goal_handle) {
       const auto goal = goal_handle->get_goal();
       const double target_m = std::abs(goal->distance_m);
 
-      auto feedback = std::make_shared<ChassisMove::Feedback>();
-      feedback->distance_remaining_m = target_m;
-      feedback->left_encoder_pos = 0;
-      feedback->right_encoder_pos = 0;
-      goal_handle->publish_feedback(feedback);
+      ChassisMove::Feedback initial_fb{};
+      initial_fb.distance_remaining_m = target_m;
+      initial_fb.left_encoder_pos = 0;
+      initial_fb.right_encoder_pos = 0;
+      goal_handle->publish_feedback(std::make_shared<ChassisMove::Feedback>(initial_fb));
+      move_feedback_relay.bind(goal_handle);
+      move_feedback_relay.update(initial_fb);
 
-      std::thread worker([&platform, node, goal_handle, goal, &map_x, &map_y]() {
+      std::thread worker([&platform, node, goal_handle, goal, &map_x, &map_y, &main_thread_tasks,
+                          &move_feedback_relay]() {
         const double start_yaw = platform.get_corrected_imu_yaw();
         const bool ok = platform.chassis().move(
           goal->distance_m, goal->speed_mps,
-          [&platform, goal_handle](const chassis::MoveProgress & p) {
+          [&platform, goal_handle, &move_feedback_relay](const chassis::MoveProgress & p) {
             if (goal_handle->is_canceling()) {
               platform.chassis().cancel_motion();
             }
-            auto fb = std::make_shared<ChassisMove::Feedback>();
-            fb->distance_remaining_m = p.distance_remaining_m;
-            fb->left_encoder_pos = p.left_encoder_pos;
-            fb->right_encoder_pos = p.right_encoder_pos;
-            goal_handle->publish_feedback(fb);
+            ChassisMove::Feedback fb{};
+            fb.distance_remaining_m = p.distance_remaining_m;
+            fb.left_encoder_pos = p.left_encoder_pos;
+            fb.right_encoder_pos = p.right_encoder_pos;
+            move_feedback_relay.update(fb);
           });
 
-        if (ok) {
-          map_x += goal->distance_m * std::cos(start_yaw);
-          map_y += goal->distance_m * std::sin(start_yaw);
-        }
+        const double delta_x = ok ? goal->distance_m * std::cos(start_yaw) : 0.0;
+        const double delta_y = ok ? goal->distance_m * std::sin(start_yaw) : 0.0;
 
-        auto final_fb = std::make_shared<ChassisMove::Feedback>();
-        final_fb->distance_remaining_m = 0.0;
-        final_fb->left_encoder_pos = 0;
-        final_fb->right_encoder_pos = 0;
-        goal_handle->publish_feedback(final_fb);
+        ChassisMove::Feedback final_fb{};
+        final_fb.distance_remaining_m = 0.0;
+        final_fb.left_encoder_pos = 0;
+        final_fb.right_encoder_pos = 0;
+        move_feedback_relay.update(final_fb);
 
         auto result = std::make_shared<ChassisMove::Result>();
         result->success = ok;
-        // canceled() 仅当 goal 已进入 CANCELING；motion_aborted 单独为真时须 abort，否则会崩
-        if (goal_handle->is_canceling()) {
-          goal_handle->canceled(result);
-          RCLCPP_INFO(node->get_logger(), "ChassisMove 已取消");
-        } else if (ok) {
-          goal_handle->succeed(result);
-          RCLCPP_INFO(node->get_logger(), "ChassisMove 成功，更新 map 位置 -> (%.3f, %.3f)", map_x, map_y);
-        } else {
-          (void)platform.chassis().motion_aborted();
-          goal_handle->abort(result);
-        }
+
+        main_thread_tasks.push([&platform, goal_handle, result, ok, node, &map_x, &map_y, delta_x, delta_y,
+                                &move_feedback_relay]() {
+          move_feedback_relay.publish_pending();
+          move_feedback_relay.clear();
+          if (goal_handle->is_canceling()) {
+            goal_handle->canceled(result);
+            RCLCPP_INFO(node->get_logger(), "ChassisMove 已取消");
+          } else if (ok) {
+            map_x += delta_x;
+            map_y += delta_y;
+            goal_handle->succeed(result);
+            RCLCPP_INFO(node->get_logger(), "ChassisMove 成功，更新 map 位置 -> (%.3f, %.3f)", map_x, map_y);
+          } else {
+            (void)platform.chassis().motion_aborted();
+            goal_handle->abort(result);
+          }
+        });
       });
       worker.detach();
     },
@@ -489,8 +657,6 @@ int main(int argc, char ** argv)
   );
 
   // ChassisSpan Action：仅在 kMove 模式下接受，Feedback 使用与 Goal 同单位的剩余角度
-  using ChassisSpan = robot_interfaces::action::ChassisSpan;
-  using GoalHandleSpan = rclcpp_action::ServerGoalHandle<ChassisSpan>;
   auto chassis_span_server = rclcpp_action::create_server<ChassisSpan>(
     node,
     "/chassis/span",
@@ -512,32 +678,40 @@ int main(int argc, char ** argv)
       return rclcpp_action::CancelResponse::ACCEPT;
     },
     // accepted callback
-    [&platform, node](const std::shared_ptr<GoalHandleSpan> goal_handle) {
+    [&platform, node, &main_thread_tasks, &span_feedback_relay](
+      const std::shared_ptr<GoalHandleSpan> goal_handle) {
       const auto goal = goal_handle->get_goal();
 
-      auto feedback = std::make_shared<ChassisSpan::Feedback>();
-      feedback->angle_remaining_rad = goal->angle_rad;
-      goal_handle->publish_feedback(feedback);
+      ChassisSpan::Feedback initial_fb{};
+      initial_fb.angle_remaining_rad = goal->angle_rad;
+      goal_handle->publish_feedback(std::make_shared<ChassisSpan::Feedback>(initial_fb));
+      span_feedback_relay.bind(goal_handle);
+      span_feedback_relay.update(initial_fb);
 
-      std::thread worker([&platform, node, goal_handle, goal]() {
+      std::thread worker([&platform, node, goal_handle, goal, &main_thread_tasks, &span_feedback_relay]() {
         const bool ok = platform.chassis().span(goal->angle_rad, goal->omega_radps);
 
-        auto final_fb = std::make_shared<ChassisSpan::Feedback>();
-        final_fb->angle_remaining_rad = 0.0;
-        goal_handle->publish_feedback(final_fb);
+        ChassisSpan::Feedback final_fb{};
+        final_fb.angle_remaining_rad = 0.0;
+        span_feedback_relay.update(final_fb);
 
         auto result = std::make_shared<ChassisSpan::Result>();
         result->success = ok;
-        if (goal_handle->is_canceling()) {
-          goal_handle->canceled(result);
-          RCLCPP_INFO(node->get_logger(), "ChassisSpan 已取消");
-        } else if (ok) {
-          goal_handle->succeed(result);
-          RCLCPP_INFO(node->get_logger(), "ChassisSpan 成功，航向已由 IMU 实时更新（map->base_link 将在 7Hz 刷新）");
-        } else {
-          (void)platform.chassis().motion_aborted();
-          goal_handle->abort(result);
-        }
+
+        main_thread_tasks.push([&platform, goal_handle, result, ok, node, &span_feedback_relay]() {
+          span_feedback_relay.publish_pending();
+          span_feedback_relay.clear();
+          if (goal_handle->is_canceling()) {
+            goal_handle->canceled(result);
+            RCLCPP_INFO(node->get_logger(), "ChassisSpan 已取消");
+          } else if (ok) {
+            goal_handle->succeed(result);
+            RCLCPP_INFO(node->get_logger(), "ChassisSpan 成功，航向已由 IMU 实时更新（map->base_link 将在 7Hz 刷新）");
+          } else {
+            (void)platform.chassis().motion_aborted();
+            goal_handle->abort(result);
+          }
+        });
       });
       worker.detach();
     },
@@ -620,11 +794,102 @@ int main(int argc, char ** argv)
     }
   );
 
+  using ArmPlayMotion = robot_interfaces::action::ArmPlayMotion;
+  using GoalHandlePlayMotion = rclcpp_action::ServerGoalHandle<ArmPlayMotion>;
+  const scara_arm::MotionPlaybackParams motion_playback_params = load_motion_playback_params(*node);
+  auto arm_play_motion_server = rclcpp_action::create_server<ArmPlayMotion>(
+    node,
+    "/arm/play_motion",
+    [node](const rclcpp_action::GoalUUID & /*uuid*/, std::shared_ptr<const ArmPlayMotion::Goal> goal) {
+      if (!goal || goal->file_path.empty()) {
+        RCLCPP_WARN(node->get_logger(), "/arm/play_motion 被拒绝：file_path 为空");
+        return rclcpp_action::GoalResponse::REJECT;
+      }
+      RCLCPP_INFO(node->get_logger(), "收到 /arm/play_motion: %s", goal->file_path.c_str());
+      return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+    },
+    [node](const std::shared_ptr<GoalHandlePlayMotion> /*goal_handle*/) {
+      RCLCPP_WARN(node->get_logger(), "/arm/play_motion 收到取消请求");
+      return rclcpp_action::CancelResponse::ACCEPT;
+    },
+    [&platform, node, motion_playback_params](const std::shared_ptr<GoalHandlePlayMotion> goal_handle) {
+      const auto goal = goal_handle->get_goal();
+      std::thread worker([&platform, node, goal_handle, goal, motion_playback_params]() {
+        const bool ok = platform.arm().play_motion_file(
+          goal->file_path,
+          motion_playback_params,
+          [goal_handle, node](const scara_arm::MotionPlayFeedback & fb) {
+            auto ros_fb = std::make_shared<ArmPlayMotion::Feedback>();
+            ros_fb->phase = motion_play_phase_string(fb.phase);
+            ros_fb->progress = static_cast<double>(fb.progress);
+            ros_fb->index = fb.index;
+            ros_fb->total = fb.total;
+            ros_fb->message = fb.message;
+            goal_handle->publish_feedback(ros_fb);
+            if (fb.phase == scara_arm::MotionPlayPhase::WaitingFirstArrived) {
+              RCLCPP_INFO(node->get_logger(), "动作播放：等待首点到位");
+            }
+          },
+          [goal_handle]() { return goal_handle->is_canceling(); });
+
+        auto res = std::make_shared<ArmPlayMotion::Result>();
+        res->success = ok;
+        res->message = ok ? "动作播放完成" : "动作播放失败或已取消";
+        if (goal_handle->is_canceling()) {
+          goal_handle->canceled(res);
+        } else if (ok) {
+          goal_handle->succeed(res);
+        } else {
+          goal_handle->abort(res);
+        }
+      });
+      worker.detach();
+    }
+  );
+
+  using StartArmMotionRecording = robot_interfaces::srv::StartArmMotionRecording;
+  auto start_motion_record_srv = node->create_service<StartArmMotionRecording>(
+    "/arm/start_motion_recording",
+    [&platform, node](
+      const std::shared_ptr<StartArmMotionRecording::Request> req,
+      std::shared_ptr<StartArmMotionRecording::Response> res) {
+      RCLCPP_INFO(
+        node->get_logger(), "收到 /arm/start_motion_recording 请求: '%s'",
+        req->action_name.c_str());
+      const bool ok = platform.arm().start_motion_recording(req->action_name);
+      res->success = ok;
+      if (ok) {
+        res->message = "录制已开始";
+        RCLCPP_INFO(node->get_logger(), "动作录制开始: %s", req->action_name.c_str());
+      } else {
+        res->message =
+          "start_motion_recording 失败（动作名无效、未标定 J1/J2、或正在录制；详见 stderr）";
+        RCLCPP_WARN(node->get_logger(), "动作录制开始失败: %s", req->action_name.c_str());
+      }
+    });
+
+  using FinishArmMotionRecording = robot_interfaces::srv::FinishArmMotionRecording;
+  auto finish_motion_record_srv = node->create_service<FinishArmMotionRecording>(
+    "/arm/finish_motion_recording",
+    [&platform, node](
+      const std::shared_ptr<FinishArmMotionRecording::Request> /*req*/,
+      std::shared_ptr<FinishArmMotionRecording::Response> res) {
+      const bool ok = platform.arm().finish_motion_recording();
+      res->success = ok;
+      res->message = ok ? "录制已保存" : "finish_motion_recording 失败（可能未在录制或写盘失败）";
+      if (ok) {
+        RCLCPP_INFO(node->get_logger(), "动作录制已保存");
+      } else {
+        RCLCPP_WARN(node->get_logger(), "动作录制结束失败");
+      }
+    });
+
   RCLCPP_INFO(
     node->get_logger(),
     "robot_platform 运行中：底盘 Twist [%s]，机械臂 JointState [%s]，IMU [%s]，7Hz map->base_link TF，"
-    "服务: /chassis/set_mode /imu/reset_zero /motor/get_state /motor/get_speed_loop_pid /motor/set_speed_loop_pid，"
-    "Actions: /chassis/move /chassis/span /arm/calibrate",
+    "服务: /chassis/set_mode /imu/reset_zero /motor/get_state /motor/get_speed_loop_pid /motor/set_speed_loop_pid "
+    "/arm/start_motion_recording /arm/finish_motion_recording，"
+    "Actions: /chassis/move /chassis/span /arm/calibrate /arm/play_motion",
     chassis_topic.c_str(), arm_topic.c_str(), imu_topic.c_str());
   rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 4);
   executor.add_node(node);

@@ -12,6 +12,7 @@ find_package(motor REQUIRED)
 
 add_library(${PROJECT_NAME} STATIC
   src/arm_joint.cpp
+  src/motion_playback.cpp
   src/robot_arm.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -19,6 +20,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(${PROJECT_NAME} PUBLIC motor::robot_driver_pd42)
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+  SCARA_ARM_RECORDINGS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/recordings")
 
 find_package(rclcpp REQUIRED)
 
@@ -40,6 +43,10 @@ install(TARGETS scara_arm_joints_repl
 )
 install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
+)
+install(DIRECTORY recordings/
+  DESTINATION share/${PROJECT_NAME}/recordings
+  USE_SOURCE_PERMISSIONS
 )
 install(DIRECTORY include/
   DESTINATION include

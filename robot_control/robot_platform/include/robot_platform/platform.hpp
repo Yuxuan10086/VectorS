@@ -40,8 +40,12 @@ public:
   double get_corrected_imu_yaw() const;
 
 private:
+  enum class OpenAttemptResult { kOk, kRetry, kFatal };
+
   bool load_chassis_params(chassis::DiffDriveParams & out);
   bool load_scara_arm_params(scara_arm::ScaraArmParams & out);
+  OpenAttemptResult open_once();
+  void reset_hardware_state();
 
   rclcpp::Node & node_;
   robot_driver::CanInterface can_;

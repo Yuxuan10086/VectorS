@@ -139,6 +139,19 @@ std::optional<bool> Pd42Motor::stall_flag()
   return std::nullopt;
 }
 
+std::optional<bool> Pd42Motor::arrived_flag()
+{
+  auto reply = send_cmd(make_read_arrived_flag_frame(motor_id_));
+  if (!reply) {
+    return std::nullopt;
+  }
+  if (auto v = parse_read_arrived_flag(*reply)) {
+    return v;
+  }
+  error_code_ = kErrReplyMismatch;
+  return std::nullopt;
+}
+
 std::optional<std::int16_t> Pd42Motor::stall_current_setting_ma()
 {
   auto reply = send_cmd(make_read_stall_current_frame(motor_id_));

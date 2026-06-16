@@ -43,9 +43,25 @@ public:
   void print_calibration_summary(std::ostream & os) const;
 
   bool set_position(double span);
+  bool set_position(
+    double span, std::optional<std::uint16_t> speed_rpm, std::optional<std::uint8_t> accel);
 
-  double span_max() const noexcept { return span_max_; }
+  /** 标定后 span→脉冲；不可映射时 nullopt */
+  std::optional<std::int32_t> span_to_pulse(double span) const;
+
+  /** 手册 0x30 到位标志；读失败 nullopt */
+  std::optional<bool> is_arrived();
+
+  /**
+   * 是否已到目标 span：当前脉冲在容差内（与 set_position 跳过下发一致），
+   * 或 0x30 为 true；若仍接近目标且转速≈0，也认为到位（0x30 可能滞后于物理停止）。
+   */
+  bool is_at_target_span(double span);
+
+  std::uint16_t position_speed_rpm() const noexcept { return abs_speed_rpm_; }
+  std::uint8_t position_accel() const noexcept { return abs_accel_; }
   double span_now() const noexcept { return span_now_; }
+  double span_max() const noexcept { return span_max_; }
   /** YAML `limit_margin_units`，与 set_limits 下发一致 */
   std::int32_t limit_margin_units() const noexcept { return margin_; }
   /** 正向碰停脉冲 H；未正向 bump 时为 nullopt */

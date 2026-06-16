@@ -92,6 +92,22 @@ ros2 service call /chassis/set_mode robot_interfaces/srv/SetDriveMode "{mode: 0}
 
 **启动自动标定已移除**：`arm_auto_calibrate` 参数及启动时自动调用已删除。请改用新的 **`/arm/calibrate` Action**（带实时进度 Feedback，每个轴完成都会推送消息，前端有按钮和三轴状态显示）。
 
+## 机械臂动作录制与播放
+
+| 接口 | 类型 | 说明 |
+|------|------|------|
+| `/arm/start_motion_recording` | Service | 开始 J1/J2 零力矩拖动录制（10Hz → CSV 7 列） |
+| `/arm/finish_motion_recording` | Service | 结束录制并写盘 |
+| `/arm/play_motion` | Action | Goal：`file_path`（CSV 绝对路径）；SDK 内预处理 + 播放；Feedback：`phase`（`loading` / `waiting_first_arrived` / `playing` / `done` / `error`）、`progress`、`index`、`total` |
+
+录制或播放期间，`/arm/joint_command` 订阅会被忽略（与 SDK `is_motion_recording()` / `is_motion_playing()` 一致）。
+
+```bash
+# 播放（示例路径须为绝对路径）
+ros2 action send_goal /arm/play_motion robot_interfaces/action/ArmPlayMotion \
+  "{file_path: '/home/user/robot_ws/src/robot_driver/scara_arm/recordings/pick_20250615_120000.csv'}"
+```
+
 ## 底盘阻塞移动 Action
 
 当底盘处于 `kMove` 模式时，`platform_node` 提供两个 ROS Action 用于执行阻塞式移动命令（对应 `chassis::DiffDriveChassis` 的 `move` / `span`）：

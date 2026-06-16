@@ -332,6 +332,12 @@ inline std::vector<uint8_t> make_read_stall_flag_frame(uint8_t addr)
   return build_downlink(addr, 0x2D);
 }
 
+/** 手册 4.3.30：读取到位标志（0x30） */
+inline std::vector<uint8_t> make_read_arrived_flag_frame(uint8_t addr)
+{
+  return build_downlink(addr, 0x30);
+}
+
 /** 手册 4.3.4：读取相电流（mA） */
 inline std::vector<uint8_t> make_read_phase_current_frame(uint8_t addr)
 {
@@ -415,6 +421,15 @@ inline std::optional<uint8_t> parse_read_run_state(const std::vector<uint8_t> & 
 inline std::optional<bool> parse_read_stall_flag(const std::vector<uint8_t> & frame)
 {
   if (!reply_success(frame, 0x2D) || frame.size() < 7) {
+    return std::nullopt;
+  }
+  return frame[4] != 0;
+}
+
+/** 0x30 应答：Byte4 到位标志 0/1（与 0x2D 类似） */
+inline std::optional<bool> parse_read_arrived_flag(const std::vector<uint8_t> & frame)
+{
+  if (!reply_success(frame, 0x30) || frame.size() < 7) {
     return std::nullopt;
   }
   return frame[4] != 0;

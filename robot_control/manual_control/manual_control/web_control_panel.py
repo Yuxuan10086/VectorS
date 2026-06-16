@@ -8,6 +8,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -31,8 +32,10 @@ try:
         GetMotorState,
         GetMotorSpeedLoopPid,
         SetMotorSpeedLoopPid,
+        StartArmMotionRecording,
+        FinishArmMotionRecording,
     )
-    from robot_interfaces.action import ChassisMove, ChassisSpan, ArmCalibrate
+    from robot_interfaces.action import ChassisMove, ChassisSpan, ArmCalibrate, ArmPlayMotion
 except Exception as _e:  # noqa: BLE001
     raise RuntimeError(
         "无法导入 robot_interfaces 的自定义服务/动作接口（SetDriveMode、电机监控、ChassisMove 等）。\n"
@@ -49,6 +52,7 @@ except Exception as _e:  # noqa: BLE001
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 import uvicorn
 
@@ -71,6 +75,47 @@ def _as_bool(val: Any) -> bool:
 
 # 默认电机列表（与 chassis.yaml + scara_arm.yaml 一致）
 DEFAULT_MONITOR_MOTOR_IDS = (5, 4, 1, 3, 2)
+
+_MOTION_CSV_RE = re.compile(r'^(.+)_(\d{8}_\d{6})\.csv$')
+
+
+def _default_arm_motion_recordings_dir() -> str:
+    if HAS_AMENT:
+        try:
+            share = get_package_share_directory('scara_arm')
+            src_dir = os.path.abspath(
+                os.path.join(share, '..', '..', '..', '..', 'src', 'robot_driver', 'scara_arm', 'recordings')
+            )
+            if os.path.isdir(src_dir):
+                return src_dir
+            install_dir = os.path.join(share, 'recordings')
+            if os.path.isdir(install_dir):
+                return install_dir
+        except Exception:
+            pass
+    return os.path.expanduser('~/robot_ws/src/robot_driver/scara_arm/recordings')
+
+
+def _resolve_motion_recordings_dirs(primary: str) -> list[str]:
+    """合并源码 recordings 与 install/share 目录，避免录制与列表扫描路径不一致。"""
+    dirs: list[str] = []
+    seen: set[str] = set()
+    candidates = [primary, _default_arm_motion_recordings_dir()]
+    if HAS_AMENT:
+        try:
+            share = get_package_share_directory('scara_arm')
+            candidates.append(os.path.join(share, 'recordings'))
+        except Exception:
+            pass
+    for raw in candidates:
+        if not raw:
+            continue
+        path = os.path.abspath(os.path.expanduser(str(raw).strip()))
+        if path and os.path.isdir(path) and path not in seen:
+            seen.add(path)
+            dirs.append(path)
+    return dirs
+
 
 _GOAL_STATUS_NAMES = {
     GoalStatus.STATUS_UNKNOWN: 'UNKNOWN',
@@ -196,6 +241,7 @@ class WebControlPanel(Node):
         # 可选会话文件日志（默认关闭）
         self.declare_parameter('panel_log_enable', False)
         self.declare_parameter('panel_log_dir', '~/robot_ws/log/web_panel')
+        self.declare_parameter('arm_motion_recordings_dir', _default_arm_motion_recordings_dir())
 
         # Load params
         self._chassis_topic = str(self.get_parameter('chassis_cmd_vel_topic').value)
@@ -230,6 +276,10 @@ class WebControlPanel(Node):
 
         self._panel_log_enable = _as_bool(self.get_parameter('panel_log_enable').value)
         self._panel_log_dir = str(self.get_parameter('panel_log_dir').value)
+        raw_motion_dir = str(self.get_parameter('arm_motion_recordings_dir').value).strip()
+        self._motion_recordings_dir = os.path.expanduser(
+            raw_motion_dir if raw_motion_dir else _default_arm_motion_recordings_dir()
+        )
 
         # Publishers & subscribers
         self._pub_twist = self.create_publisher(Twist, self._chassis_topic, 10)
@@ -241,6 +291,18 @@ class WebControlPanel(Node):
         self._move_client = ActionClient(self, ChassisMove, '/chassis/move')
         self._span_client = ActionClient(self, ChassisSpan, '/chassis/span')
         self._calib_client = ActionClient(self, ArmCalibrate, '/arm/calibrate')
+        self._play_motion_client = ActionClient(self, ArmPlayMotion, '/arm/play_motion')
+        self._arm_srv_cb_group = ReentrantCallbackGroup()
+        self._start_motion_record_client = self.create_client(
+            StartArmMotionRecording,
+            '/arm/start_motion_recording',
+            callback_group=self._arm_srv_cb_group,
+        )
+        self._finish_motion_record_client = self.create_client(
+            FinishArmMotionRecording,
+            '/arm/finish_motion_recording',
+            callback_group=self._arm_srv_cb_group,
+        )
         # 电机服务客户端使用可重入回调组，允许在独立轮询线程中阻塞调用
         self._motor_cb_group = ReentrantCallbackGroup()
         self._get_state_client = self.create_client(
@@ -257,6 +319,11 @@ class WebControlPanel(Node):
         self._active_move_gh = None
         self._active_span_gh = None
         self._active_calib_gh = None
+        self._active_play_motion_gh = None
+        self._motion_recording = False
+        self._motion_playing = False
+        self._motion_play_action = ''
+        self._arm_motion_lock = threading.Lock()
 
         self._imu_yaw_rad = 0.0
         self._imu_received = False
@@ -298,7 +365,7 @@ class WebControlPanel(Node):
 
         self.get_logger().info(
             f'Web control panel ready. Topics: chassis={self._chassis_topic}, imu={self._imu_topic}, '
-            f'arm={self._arm_topic}. '
+            f'arm={self._arm_topic}. motions_dir={self._motion_recordings_dir}. '
             f'Control UI http://{self.web_host}:{self.web_port}/  Monitor http://{self.web_host}:{self.web_port}/monitor'
         )
         self._publish_arm()  # initial position
@@ -390,6 +457,24 @@ class WebControlPanel(Node):
         if j2 is not None:
             self._arm_j2 = _clamp(j2, self._j2_min, self._j2_max)
 
+        if self._motion_recording:
+            self._safe_broadcast({
+                'type': 'arm',
+                'z': self._arm_z,
+                'j1': self._arm_j1,
+                'j2': self._arm_j2,
+            })
+            return
+
+        if self._motion_playing:
+            self._safe_broadcast({
+                'type': 'arm',
+                'z': self._arm_z,
+                'j1': self._arm_j1,
+                'j2': self._arm_j2,
+            })
+            return
+
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = self._joint_names
@@ -414,13 +499,15 @@ class WebControlPanel(Node):
             )
             self._publish_twist(0.0, 0.0, log_source='watchdog')
 
-        # periodic status push
+        # periodic status push（不含 arm_motions：避免 10Hz 扫盘 + 前端重建按钮导致难点击）
         self._safe_broadcast({
             'type': 'status',
             'mode': self._current_mode,
             'arm': {'z': self._arm_z, 'j1': self._arm_j1, 'j2': self._arm_j2},
             'twist': {'linear_x': self._last_twist[0], 'angular_z': self._last_twist[1]},
             'heading': self._heading_payload(),
+            'motion_recording': self._motion_recording,
+            'motion_playing': self._motion_playing,
         })
 
     def _twist_keepalive(self) -> None:
@@ -439,8 +526,7 @@ class WebControlPanel(Node):
         req = SetDriveMode.Request()
         req.mode = int(mode)
         fut = self._mode_client.call_async(req)
-        rclpy.spin_until_future_complete(self, fut, timeout_sec=5.0)
-        if fut.done():
+        if self._wait_for_future(fut, 5.0):
             res = fut.result()
             if res.success:
                 self._current_mode = mode
@@ -454,6 +540,13 @@ class WebControlPanel(Node):
             return bool(res.success), res.message or ''
         self._plog('set_mode_fail', reason='timeout')
         return False, '模式切换超时'
+
+    def _wait_for_future(self, fut, timeout_sec: float) -> bool:
+        """等待 async future，不在已 spin 的节点上嵌套 spin_until_future_complete。"""
+        deadline = time.monotonic() + timeout_sec
+        while not fut.done() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        return fut.done()
 
     # Action helpers
     def _send_move_blocking(self, distance_m: float, speed_mps: float) -> tuple[bool, str]:
@@ -471,8 +564,7 @@ class WebControlPanel(Node):
         goal.distance_m = float(distance_m)
         goal.speed_mps = float(speed_mps)
         send_fut = self._move_client.send_goal_async(goal, feedback_callback=self._on_move_feedback)
-        rclpy.spin_until_future_complete(self, send_fut, timeout_sec=4.0)
-        if not send_fut.done():
+        if not self._wait_for_future(send_fut, 4.0):
             self._plog('move_reject', reason='send_timeout')
             return False, '发送 Move Goal 超时'
         gh = send_fut.result()
@@ -543,8 +635,7 @@ class WebControlPanel(Node):
         goal.angle_rad = float(angle_rad)
         goal.omega_radps = float(omega_radps)
         send_fut = self._span_client.send_goal_async(goal, feedback_callback=self._on_span_feedback)
-        rclpy.spin_until_future_complete(self, send_fut, timeout_sec=4.0)
-        if not send_fut.done():
+        if not self._wait_for_future(send_fut, 4.0):
             self._plog('span_reject', reason='send_timeout')
             return False, '发送 Span Goal 超时'
         gh = send_fut.result()
@@ -594,8 +685,7 @@ class WebControlPanel(Node):
             return False, 'Action /arm/calibrate 服务器不可用（确认 robot_platform 已启动）'
         goal = ArmCalibrate.Goal()
         send_fut = self._calib_client.send_goal_async(goal, feedback_callback=self._on_calib_feedback)
-        rclpy.spin_until_future_complete(self, send_fut, timeout_sec=4.0)
-        if not send_fut.done():
+        if not self._wait_for_future(send_fut, 4.0):
             return False, '发送 Calibrate Goal 超时'
         gh = send_fut.result()
         if gh is None or not gh.accepted:
@@ -630,9 +720,210 @@ class WebControlPanel(Node):
         except Exception as e:
             self._safe_broadcast({'type': 'action_result', 'action': 'calibrate', 'success': False, 'message': str(e)})
 
+    def _scan_arm_motions(self) -> list[str]:
+        names: set[str] = set()
+        for directory in _resolve_motion_recordings_dirs(self._motion_recordings_dir):
+            try:
+                for entry in os.listdir(directory):
+                    matched = _MOTION_CSV_RE.match(entry)
+                    if matched:
+                        names.add(matched.group(1))
+            except OSError as exc:
+                self.get_logger().warn(f'扫描动作目录失败 {directory}: {exc}')
+        return sorted(names)
+
+    def _arm_motions_payload(self) -> dict[str, Any]:
+        return {
+            'type': 'arm_motions',
+            'actions': self._scan_arm_motions(),
+            'recording': self._motion_recording,
+            'playing': self._motion_playing,
+        }
+
+    def _find_latest_motion_csv(self, action_name: str) -> str | None:
+        best_name = ''
+        best_ts = ''
+        best_path = ''
+        for directory in _resolve_motion_recordings_dirs(self._motion_recordings_dir):
+            prefix = f'{action_name}_'
+            try:
+                for entry in os.listdir(directory):
+                    if not entry.startswith(prefix) or not entry.endswith('.csv'):
+                        continue
+                    matched = _MOTION_CSV_RE.match(entry)
+                    if not matched or matched.group(1) != action_name:
+                        continue
+                    ts = matched.group(2)
+                    if ts > best_ts:
+                        best_ts = ts
+                        best_name = entry
+                        best_path = os.path.join(directory, entry)
+            except OSError:
+                continue
+        if not best_name:
+            return None
+        return best_path
+
+    def _delete_arm_motion_blocking(self, action_name: str) -> tuple[bool, str]:
+        name = action_name.strip()
+        if not name:
+            return False, '动作名不能为空'
+        if self._motion_recording or self._motion_playing:
+            return False, '当前正在录制或播放动作，无法删除'
+        dirs = _resolve_motion_recordings_dirs(self._motion_recordings_dir)
+        if not dirs:
+            return False, '未找到动作 recordings 目录'
+        deleted: list[str] = []
+        try:
+            for directory in dirs:
+                for entry in os.listdir(directory):
+                    matched = _MOTION_CSV_RE.match(entry)
+                    if not matched or matched.group(1) != name:
+                        continue
+                    path = os.path.join(directory, entry)
+                    try:
+                        os.remove(path)
+                        deleted.append(f'{directory}/{entry}')
+                    except OSError as exc:
+                        return False, f'删除 {entry} 失败: {exc}'
+        except OSError as exc:
+            return False, f'读取动作目录失败: {exc}'
+        if not deleted:
+            return False, f'未找到动作「{name}」的文件'
+        self.get_logger().info(f'已删除动作 {name!r}: {deleted}')
+        self._safe_broadcast(self._arm_motions_payload())
+        return True, f'已删除动作「{name}」（{len(deleted)} 个文件）'
+
+    def _start_motion_record_blocking(self, action_name: str) -> tuple[bool, str]:
+        name = action_name.strip()
+        if not name:
+            return False, '动作名不能为空'
+        if self._motion_recording or self._motion_playing:
+            return False, '当前正在录制或播放动作'
+        self.get_logger().info(f'请求开始动作录制: {name!r}')
+        if not self._start_motion_record_client.wait_for_service(timeout_sec=5.0):
+            msg = (
+                '服务 /arm/start_motion_recording 不可用。'
+                '请确认 robot_platform 已重新编译并重启'
+            )
+            self.get_logger().error(msg)
+            return False, msg
+        req = StartArmMotionRecording.Request()
+        req.action_name = name
+        fut = self._start_motion_record_client.call_async(req)
+        if not self._wait_for_future(fut, 10.0):
+            self.get_logger().error('开始录制服务调用超时')
+            return False, '开始录制超时'
+        res = fut.result()
+        if res is None:
+            self.get_logger().error('开始录制服务无响应')
+            return False, '无响应'
+        if not res.success:
+            self.get_logger().warn(f'开始录制失败: {res.message}')
+            return False, res.message or 'start_motion_recording 返回失败'
+        self._motion_recording = True
+        self.get_logger().info(f'动作录制已开始: {name!r}')
+        return True, res.message or '录制已开始，请拖动 J1/J2 后点击结束录制'
+
+    def _finish_motion_record_blocking(self) -> tuple[bool, str]:
+        if not self._motion_recording:
+            return False, '当前未在录制'
+        self.get_logger().info('请求结束动作录制')
+        if not self._finish_motion_record_client.wait_for_service(timeout_sec=5.0):
+            msg = '服务 /arm/finish_motion_recording 不可用'
+            self.get_logger().error(msg)
+            return False, msg
+        req = FinishArmMotionRecording.Request()
+        fut = self._finish_motion_record_client.call_async(req)
+        if not self._wait_for_future(fut, 30.0):
+            msg = '结束录制服务调用超时'
+            self.get_logger().error(msg)
+            self._motion_recording = False
+            return False, msg
+        res = fut.result()
+        self._motion_recording = False
+        if res is None or not res.success:
+            self.get_logger().warn(f'结束录制失败: {res.message if res else "无响应"}')
+            return False, res.message if res else '无响应'
+        self._safe_broadcast(self._arm_motions_payload())
+        self.get_logger().info('动作录制已保存')
+        return True, res.message or '动作已保存'
+
+    def _on_play_motion_feedback(self, feedback_msg: Any) -> None:
+        fb = feedback_msg.feedback
+        phase = str(fb.phase or '')
+        self._safe_broadcast({
+            'type': 'play_motion_feedback',
+            'action': self._motion_play_action,
+            'phase': phase,
+            'message': fb.message or '',
+            'progress': float(fb.progress),
+            'index': int(fb.index),
+            'total': int(fb.total),
+        })
+
+    def _send_play_motion_blocking(self, file_path: str, action_name: str) -> tuple[bool, str]:
+        if self._motion_recording or self._motion_playing:
+            return False, '当前正在录制或播放动作'
+        if not file_path:
+            return False, '动作 CSV 路径为空'
+        if not self._play_motion_client.wait_for_server(timeout_sec=5.0):
+            return False, 'Action /arm/play_motion 不可用（确认 robot_platform 已启动）'
+
+        self._motion_playing = True
+        self._motion_play_action = action_name
+        self._safe_broadcast(self._arm_motions_payload())
+        self._safe_broadcast({
+            'type': 'play_motion_feedback',
+            'action': action_name,
+            'phase': 'loading',
+            'message': f'正在播放「{action_name}」…',
+            'progress': 0.0,
+        })
+
+        goal = ArmPlayMotion.Goal()
+        goal.file_path = file_path
+        send_fut = self._play_motion_client.send_goal_async(
+            goal, feedback_callback=self._on_play_motion_feedback)
+        if not self._wait_for_future(send_fut, 5.0):
+            self._motion_playing = False
+            self._safe_broadcast(self._arm_motions_payload())
+            return False, '发送播放 Goal 超时'
+        gh = send_fut.result()
+        if gh is None or not gh.accepted:
+            self._motion_playing = False
+            self._safe_broadcast(self._arm_motions_payload())
+            return False, '播放 Goal 被拒绝'
+        self._active_play_motion_gh = gh
+        result_fut = gh.get_result_async()
+        if not self._wait_for_future(result_fut, 600.0):
+            self._motion_playing = False
+            self._active_play_motion_gh = None
+            self._safe_broadcast(self._arm_motions_payload())
+            try:
+                gh.cancel_goal_async()
+            except Exception:
+                pass
+            return False, '播放超时'
+        self._active_play_motion_gh = None
+        self._motion_playing = False
+        self._safe_broadcast(self._arm_motions_payload())
+        try:
+            res = result_fut.result()
+            ok = bool(res.result.success)
+            msg = res.result.message or ('播放完成' if ok else '播放失败')
+            return ok, msg
+        except Exception as exc:
+            return False, str(exc)
+
     def _cancel_active_actions(self, source: str = 'unknown') -> None:
         self._plog('cancel_actions', source=source, active=self._active_goal_snapshot())
-        for gh, name in [(self._active_move_gh, 'move'), (self._active_span_gh, 'span'), (self._active_calib_gh, 'calibrate')]:
+        for gh, name in [
+            (self._active_move_gh, 'move'),
+            (self._active_span_gh, 'span'),
+            (self._active_calib_gh, 'calibrate'),
+            (self._active_play_motion_gh, 'play_motion'),
+        ]:
             if gh is not None:
                 try:
                     cancel_fut = gh.cancel_goal_async()
@@ -651,6 +942,7 @@ class WebControlPanel(Node):
         self._active_move_gh = None
         self._active_span_gh = None
         self._active_calib_gh = None
+        self._active_play_motion_gh = None
 
     def _plog(self, event: str, **fields: Any) -> None:
         self._panel_log.log(event, mode=self._current_mode, **fields)
@@ -679,6 +971,7 @@ class WebControlPanel(Node):
             'move': self._active_move_gh is not None,
             'span': self._active_span_gh is not None,
             'calibrate': self._active_calib_gh is not None,
+            'play_motion': self._active_play_motion_gh is not None,
         }
 
     def _chassis_action_busy(self) -> bool:
@@ -705,6 +998,12 @@ class WebControlPanel(Node):
                 dead.append(ws)
         for d in dead:
             self._ws_clients.discard(d)
+
+    async def _ws_send_json(self, ws: WebSocket, payload: dict[str, Any]) -> None:
+        try:
+            await ws.send_text(json.dumps(payload, ensure_ascii=False))
+        except (WebSocketDisconnect, RuntimeError):
+            pass
 
     def _safe_broadcast_monitor(self, msg: dict[str, Any]) -> None:
         if self._loop is None:
@@ -818,8 +1117,7 @@ class WebControlPanel(Node):
         req = GetMotorState.Request()
         req.motor_id = int(motor_id) & 0xFF
         fut = self._get_state_client.call_async(req)
-        rclpy.spin_until_future_complete(self, fut, timeout_sec=3.0)
-        if not fut.done():
+        if not self._wait_for_future(fut, 3.0):
             return {
                 'motor_id': int(motor_id),
                 'success': False,
@@ -844,8 +1142,7 @@ class WebControlPanel(Node):
         req = GetMotorSpeedLoopPid.Request()
         req.motor_id = int(motor_id) & 0xFF
         fut = self._get_pid_client.call_async(req)
-        rclpy.spin_until_future_complete(self, fut, timeout_sec=3.0)
-        if not fut.done():
+        if not self._wait_for_future(fut, 3.0):
             self._plog('get_pid_fail', motor_id=int(motor_id), reason='timeout')
             return False, '读取 PID 超时', 0, 0, 0
         res = fut.result()
@@ -876,8 +1173,7 @@ class WebControlPanel(Node):
         req.i = int(i)
         req.d = int(d)
         fut = self._set_pid_client.call_async(req)
-        rclpy.spin_until_future_complete(self, fut, timeout_sec=3.0)
-        if not fut.done():
+        if not self._wait_for_future(fut, 3.0):
             self._plog('set_pid_fail', motor_id=int(motor_id), reason='timeout')
             return False, '设置 PID 超时', 0, 0, 0
         res = fut.result()
@@ -984,6 +1280,101 @@ class WebControlPanel(Node):
                     'message': msg,
                 }, ensure_ascii=False))
 
+            elif t == 'start_motion_record':
+                action_name = str(cmd.get('action_name', '')).strip()
+                loop = asyncio.get_running_loop()
+                ok, msg = await loop.run_in_executor(
+                    None, partial(self._start_motion_record_blocking, action_name)
+                )
+                if ok:
+                    self._safe_broadcast(self._arm_motions_payload())
+                await self._ws_send_json(ws, {
+                    'type': 'action_result',
+                    'action': 'motion_record',
+                    'success': ok,
+                    'message': msg,
+                    'recording': self._motion_recording,
+                })
+
+            elif t == 'finish_motion_record':
+                loop = asyncio.get_running_loop()
+                ok, msg = await loop.run_in_executor(
+                    None, self._finish_motion_record_blocking
+                )
+                await self._ws_send_json(ws, {
+                    'type': 'action_result',
+                    'action': 'motion_record',
+                    'success': ok,
+                    'message': msg,
+                    'recording': self._motion_recording,
+                })
+
+            elif t == 'play_arm_motion':
+                action_name = str(cmd.get('action_name', '')).strip()
+                if not action_name:
+                    await self._ws_send_json(ws, {
+                        'type': 'action_result',
+                        'action': 'play_motion',
+                        'success': False,
+                        'message': '动作名不能为空',
+                    })
+                else:
+                    path = self._find_latest_motion_csv(action_name)
+                    if not path:
+                        await self._ws_send_json(ws, {
+                            'type': 'action_result',
+                            'action': 'play_motion',
+                            'success': False,
+                            'message': f'未找到动作「{action_name}」的 CSV 文件',
+                        })
+                    else:
+                        await self._ws_send_json(ws, {
+                            'type': 'play_motion_ack',
+                            'action_name': action_name,
+                            'message': f'已接收播放请求「{action_name}」',
+                        })
+                        loop = asyncio.get_running_loop()
+
+                        async def _run_play_motion() -> None:
+                            ok, msg = await loop.run_in_executor(
+                                None, partial(self._send_play_motion_blocking, path, action_name)
+                            )
+                            payload = {
+                                'type': 'action_result',
+                                'action': 'play_motion',
+                                'success': ok,
+                                'message': msg,
+                            }
+                            try:
+                                await ws.send_text(json.dumps(payload, ensure_ascii=False))
+                            except Exception:
+                                self._safe_broadcast(payload)
+
+                        asyncio.create_task(_run_play_motion())
+
+            elif t == 'delete_arm_motion':
+                action_name = str(cmd.get('action_name', '')).strip()
+                loop = asyncio.get_running_loop()
+
+                async def _run_delete_motion() -> None:
+                    ok, msg = await loop.run_in_executor(
+                        None, partial(self._delete_arm_motion_blocking, action_name)
+                    )
+                    payload = {
+                        'type': 'action_result',
+                        'action': 'delete_motion',
+                        'success': ok,
+                        'message': msg,
+                        'action_name': action_name,
+                    }
+                    self._safe_broadcast(payload)
+                    try:
+                        await ws.send_text(json.dumps(payload, ensure_ascii=False))
+                    except Exception:
+                        pass
+
+                asyncio.create_task(_run_delete_motion())
+
             elif t == 'cancel_actions':
                 self._cancel_active_actions(source='cancel_actions')
 
@@ -1009,10 +1400,20 @@ class WebControlPanel(Node):
                 await ws.send_text(json.dumps({'type': 'pong', 't': time.time()}, ensure_ascii=False))
 
             else:
-                await ws.send_text(json.dumps({'type': 'error', 'message': f'未知命令: {t}'}, ensure_ascii=False))
+                await self._ws_send_json(ws, {'type': 'error', 'message': f'未知命令: {t}'})
+        except WebSocketDisconnect:
+            return
         except Exception as exc:
             self._plog('ws_cmd_error', cmd_type=t, error=str(exc))
-            await ws.send_text(json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False))
+            await self._ws_send_json(ws, {'type': 'error', 'message': str(exc)})
+            if t == 'delete_arm_motion':
+                self._safe_broadcast({
+                    'type': 'action_result',
+                    'action': 'delete_motion',
+                    'success': False,
+                    'message': str(exc),
+                    'action_name': str(cmd.get('action_name', '')).strip(),
+                })
 
     async def handle_ws_monitor_command(self, ws: WebSocket, cmd: dict[str, Any]) -> None:
         t = cmd.get('type')
@@ -1239,6 +1640,30 @@ def _load_monitor_html() -> str:
     return '<html><body><h1>monitor.html 未找到</h1><p><a href="/">返回控制页</a></p></body></html>'
 
 
+def _resolve_web_static_dir() -> str | None:
+    """Locate web/static for offline CSS/JS (install share or source tree)."""
+    candidates: list[str] = []
+    if HAS_AMENT:
+        try:
+            share = get_package_share_directory('manual_control')
+            candidates.append(os.path.join(share, 'web', 'static'))
+        except Exception:
+            pass
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates.extend([
+        os.path.join(here, '..', '..', 'web', 'static'),
+        os.path.join('/home/yuxuan/robot_ws/src/robot_control/manual_control', 'web', 'static'),
+    ])
+    for raw in candidates:
+        try:
+            path = os.path.realpath(raw)
+        except OSError:
+            continue
+        if os.path.isdir(path):
+            return path
+    return None
+
+
 def create_app(node: WebControlPanel) -> FastAPI:
     app = FastAPI(title="Robot Web Control Panel", version="1.0")
 
@@ -1249,6 +1674,12 @@ def create_app(node: WebControlPanel) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    static_dir = _resolve_web_static_dir()
+    if static_dir:
+        app.mount('/static', StaticFiles(directory=static_dir), name='static')
+    else:
+        node.get_logger().warn('web/static 目录未找到，页面样式可能无法加载（请 colcon build manual_control）')
 
     @app.get("/", response_class=HTMLResponse)
     async def get_index():
@@ -1273,6 +1704,9 @@ def create_app(node: WebControlPanel) -> FastAPI:
             'mode': node._current_mode,
             'arm': {'z': node._arm_z, 'j1': node._arm_j1, 'j2': node._arm_j2},
             'action_busy': node._chassis_action_busy(),
+            'arm_motions': node._scan_arm_motions(),
+            'motion_recording': node._motion_recording,
+            'motion_playing': node._motion_playing,
         }, ensure_ascii=False))
 
         try:

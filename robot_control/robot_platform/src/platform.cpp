@@ -2,6 +2,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <stdexcept>
 
@@ -194,21 +195,30 @@ bool Platform::load_scara_arm_params(scara_arm::ScaraArmParams & out)
   return true;
 }
 
-bool Platform::open()
+void Platform::reset_hardware_state()
 {
-  if (open_) {
-    return true;
+  if (chassis_) {
+    // 关闭前切回 move 模式（关闭看门狗），实际电机停止由析构负责
+    (void)chassis_->set_mode(chassis::DriveMode::kMove);
   }
+  arm_.reset();
+  chassis_.reset();
+  if (can_.is_open()) {
+    can_.close();
+  }
+}
 
+Platform::OpenAttemptResult Platform::open_once()
+{
   if (!can_.open()) {
     RCLCPP_ERROR(node_.get_logger(), "无法打开 CAN");
-    return false;
+    return OpenAttemptResult::kRetry;
   }
 
   chassis::DiffDriveParams cp{};
   if (!load_chassis_params(cp)) {
-    can_.close();
-    return false;
+    reset_hardware_state();
+    return OpenAttemptResult::kFatal;
   }
 
   chassis_ = std::make_unique<chassis::DiffDriveChassis>(can_, cp);
@@ -224,46 +234,79 @@ bool Platform::open()
       "左电机 error_code=0x%02X (%s)；右电机 error_code=0x%02X (%s)。"
       "请检查 CAN 总线、电机上电、接线与 ID 配置。",
       left_code, left_hint.c_str(), right_code, right_hint.c_str());
-    chassis_.reset();
-    can_.close();
-    return false;
+    reset_hardware_state();
+    return OpenAttemptResult::kRetry;
   }
 
   scara_arm::ScaraArmParams ap{};
   if (!load_scara_arm_params(ap)) {
-    chassis_.reset();
-    can_.close();
-    return false;
+    reset_hardware_state();
+    return OpenAttemptResult::kFatal;
   }
 
   try {
     arm_ = std::make_unique<scara_arm::RobotArm>(can_, ap);
   } catch (const std::exception & e) {
     RCLCPP_ERROR(node_.get_logger(), "构造 RobotArm 失败: %s", e.what());
-    chassis_.reset();
-    can_.close();
-    return false;
+    reset_hardware_state();
+    return OpenAttemptResult::kRetry;
   }
 
-  open_ = true;
-  RCLCPP_INFO(node_.get_logger(), "Platform 已打开（CAN + 底盘 + 机械臂）");
-  return true;
+  return OpenAttemptResult::kOk;
+}
+
+bool Platform::open()
+{
+  if (open_) {
+    return true;
+  }
+
+  constexpr double kOpenRetryIntervalSec = 1.0;
+  constexpr double kOpenTimeoutSec = 60.0;
+
+  const rclcpp::Time deadline =
+    node_.now() + rclcpp::Duration::from_seconds(kOpenTimeoutSec);
+  int attempt = 0;
+
+  while (true) {
+    ++attempt;
+    switch (open_once()) {
+      case OpenAttemptResult::kOk:
+        open_ = true;
+        RCLCPP_INFO(node_.get_logger(), "Platform 已打开（CAN + 底盘 + 机械臂）");
+        return true;
+      case OpenAttemptResult::kFatal:
+        reset_hardware_state();
+        return false;
+      case OpenAttemptResult::kRetry:
+        if (node_.now() >= deadline) {
+          reset_hardware_state();
+          RCLCPP_ERROR(
+            node_.get_logger(),
+            "Platform open 超时（%.0f 秒，共尝试 %d 次）。请检查 CAN 总线、电机上电与接线。",
+            kOpenTimeoutSec, attempt);
+          return false;
+        }
+        {
+          const double remaining_sec = (deadline - node_.now()).seconds();
+          RCLCPP_WARN(
+            node_.get_logger(),
+            "Platform open 失败（第 %d 次），%.0f 秒后重试（剩余约 %.0f 秒）",
+            attempt, kOpenRetryIntervalSec, remaining_sec);
+        }
+        rclcpp::sleep_for(std::chrono::seconds(static_cast<int>(kOpenRetryIntervalSec)));
+        reset_hardware_state();
+        break;
+    }
+  }
 }
 
 void Platform::close()
 {
-  if (!open_) {
+  if (!open_ && !chassis_ && !arm_ && !can_.is_open()) {
     return;
   }
-  if (chassis_) {
-    // 关闭前切回 move 模式（关闭看门狗），实际电机停止由析构负责
-    (void)chassis_->set_mode(chassis::DriveMode::kMove);
-  }
-  arm_.reset();
-  chassis_.reset();
-  if (can_.is_open()) {
-    can_.close();
-  }
+  reset_hardware_state();
   open_ = false;
 }
 

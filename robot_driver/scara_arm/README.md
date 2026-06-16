@@ -21,6 +21,53 @@
 3. **`set_limits`**：以 **`H`**（正向碰停脉冲）为标度，驱动限位脉冲为 **`[margin, H-margin]`**；**返回**单侧 span 裕量 **`(margin/H)·span_max`**。**`RobotArm::calibrate()`** 据此与各轴名义 **`span_max`** 写入公有成员 **`reachable_span_min_*` / `reachable_span_max_*`**。  
 4. **`calibrate()`**：整臂标定流程（**先 Z 碰停与限位**，再 **J2 / J1** 等；细节以 `robot_arm.cpp` 为准）；由 **`robot_platform`** 的 `/arm/calibrate` Action 触发。
 
+## 动作录制（J1/J2 零力矩拖动）
+
+须 **J1/J2 已标定**（`forward_stop_pulse` 有效）。**Z 轴保持位置模式**，不参与采样。
+
+| 接口 | 含义 |
+|------|------|
+| `start_motion_recording(action_name)` | J1/J2 切力矩模式、`set_torque(false, 0)`，后台以 **10Hz** 采样 `span_j1` / `span_j2` |
+| `finish_motion_recording()` | 结束采样、恢复 J1/J2 位置模式，将轨迹写入 CSV 后清空缓冲；返回写盘是否成功 |
+| `play_motion_file(path, params, on_feedback, should_cancel)` | SDK 内读 CSV、预处理、首点到位门控 + 段循环下发 **0xF2**（rpm/accel）；与录制互斥 |
+| `is_motion_playing()` | 播放进行中为 `true` |
+
+- **输出目录**：源码包内 **`recordings/`**（编译时由 CMake 宏 `SCARA_ARM_RECORDINGS_DIR` 固定为绝对路径）
+- **文件名**：`{action_name}_YYYYMMDD_HHMMSS.csv`（`action_name` 仅保留字母数字与 `_`）
+- **格式**：首行 `t_sec,span_j1,span_j2,vel_j1,vel_j2,acc_j1,acc_j2`（旧三列文件播放时自动差分补全 vel/acc）
+- 录制中 **`calibrate()`** / **`set_position()`** / **`play_motion_file()`** 返回 `false`；播放中同样互斥
+
+```cpp
+arm.start_motion_recording("pick");
+// 手动拖动 J1/J2 …
+arm.finish_motion_recording();
+```
+
+**播放参数**（`scara_arm.yaml` 中 `playback_*`，由 `robot_platform` 注入 `MotionPlaybackParams`）：
+
+| 参数 | 默认 | 含义 |
+|------|------|------|
+| `playback_window_k` | 2 | vel/acc 滑动窗口半宽 |
+| `playback_arrived_poll_ms` | 20 | 首点 **0x30** 轮询间隔 |
+| `playback_arrived_timeout_sec` | 15 | 首点到位超时 |
+| `playback_rpm_min` | 5 | 段 rpm 下限 |
+| `playback_stationary_span_eps` | 0.05 | 静止点合并阈值（°） |
+| `playback_acc_span_per_s2_max` | 500 | acc 映射上界 |
+| `playback_accel_min` / `playback_accel_max` | 5 / 40 | 驱动 accel 档 clamp |
+| `playback_segment_time_min_sec` | 0.05 | 段最小时长 |
+
+**实机测试建议**：
+
+1. motor REPL：`0xF2` 运动后读 `arrived_flag()`（0x30）。
+2. 短轨迹双轴联动：对比旧网页逐点播放与 SDK 播放。
+3. 首点较远：确认 Action Feedback 先 `waiting_first_arrived` 再 `playing`。
+4. Action cancel 中途停止。
+5. 旧三列 CSV 仍能播放。
+6. 互斥：录制中播放失败；播放中录制与 `joint_command` 被忽略。
+
+ROS 服务（`robot_platform`）：`/arm/start_motion_recording`、`/arm/finish_motion_recording`。  
+ROS Action：`/arm/play_motion`（Goal：`file_path` 为 CSV **绝对路径**）。
+
 ## 依赖
 
 - 同 workspace 已编译 **`motor`**  

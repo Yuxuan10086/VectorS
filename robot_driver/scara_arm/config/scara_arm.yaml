@@ -36,3 +36,14 @@
     span_z: 100.0
     span_joint1: 180.0
     span_joint2: 180.0
+
+    # 动作 CSV 播放（SDK play_motion_file）
+    playback_window_k: 2
+    playback_arrived_poll_ms: 20
+    playback_arrived_timeout_sec: 15.0
+    playback_rpm_min: 5
+    playback_stationary_span_eps: 0.05
+    playback_acc_span_per_s2_max: 500.0
+    playback_accel_min: 5
+    playback_accel_max: 40
+    playback_segment_time_min_sec: 0.05

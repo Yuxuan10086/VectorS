@@ -16,9 +16,12 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetMotorState.srv"
   "srv/GetMotorSpeedLoopPid.srv"
   "srv/SetMotorSpeedLoopPid.srv"
+  "srv/StartArmMotionRecording.srv"
+  "srv/FinishArmMotionRecording.srv"
   "action/ChassisMove.action"
   "action/ChassisSpan.action"
   "action/ArmCalibrate.action"
+  "action/ArmPlayMotion.action"
   DEPENDENCIES action_msgs builtin_interfaces
 )
 

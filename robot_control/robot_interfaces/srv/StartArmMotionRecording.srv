@@ -1,0 +1,5 @@
+# 开始 J1/J2 零力矩拖动录制（须已标定）
+string action_name
+---
+bool success
+string message

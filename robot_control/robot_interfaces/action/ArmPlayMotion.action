@@ -1,0 +1,13 @@
+# 播放 J1/J2 轨迹 CSV（绝对路径由 Web 解析后传入）
+string file_path
+
+---
+bool success
+string message
+
+---
+string phase
+float64 progress
+int32 index
+int32 total
+string message
