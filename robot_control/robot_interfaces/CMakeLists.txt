@@ -16,6 +16,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetMotorState.srv"
   "srv/GetMotorSpeedLoopPid.srv"
   "srv/SetMotorSpeedLoopPid.srv"
+  "srv/GetMotorPositionLoopPid.srv"
+  "srv/SetMotorPositionLoopPid.srv"
   "srv/StartArmMotionRecording.srv"
   "srv/FinishArmMotionRecording.srv"
   "action/ChassisMove.action"

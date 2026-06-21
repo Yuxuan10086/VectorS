@@ -3,6 +3,7 @@
 #define SCARA_ARM__ROBOT_ARM_HPP_
 
 #include <cstdint>
+#include <array>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -72,6 +73,9 @@ public:
     std::function<bool()> should_cancel = nullptr);
 
   bool is_motion_playing() const noexcept { return playing_.load(); }
+
+  /** 读三轴当前逻辑 span（电机位置反馈）；任一轴读失败则 nullopt */
+  std::optional<std::array<double, 3>> read_joint_spans() const;
 
   /** `calibrate()` 内由各轴 `set_limits()` 单侧裕量与名义 `span_max` 写入；未标定前为 0 */
   double reachable_span_min_z = 0.0;

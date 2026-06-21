@@ -56,7 +56,8 @@ public:
    * 是否已到目标 span：当前脉冲在容差内（与 set_position 跳过下发一致），
    * 或 0x30 为 true；若仍接近目标且转速≈0，也认为到位（0x30 可能滞后于物理停止）。
    */
-  bool is_at_target_span(double span);
+  /** span_eps：目标 span 与反馈 span 允许偏差（与录制/静止合并同单位） */
+  bool is_at_target_span(double span, double span_eps = 0.3);
 
   std::uint16_t position_speed_rpm() const noexcept { return abs_speed_rpm_; }
   std::uint8_t position_accel() const noexcept { return abs_accel_; }

@@ -457,6 +457,17 @@ bool RobotArm::set_position(double span_z, double span_joint1, double span_joint
   return jz_->set_position(span_z) && j1_->set_position(span_joint1) && j2_->set_position(span_joint2);
 }
 
+std::optional<std::array<double, 3>> RobotArm::read_joint_spans() const
+{
+  const auto z = read_joint_span(*jz_);
+  const auto j1 = read_joint_span(*j1_);
+  const auto j2 = read_joint_span(*j2_);
+  if (!z || !j1 || !j2) {
+    return std::nullopt;
+  }
+  return std::array<double, 3>{*z, *j1, *j2};
+}
+
 bool RobotArm::set_position_j1_j2(
   double span_j1, double span_j2,
   std::optional<std::uint16_t> rpm_j1, std::optional<std::uint16_t> rpm_j2,
@@ -484,12 +495,13 @@ bool RobotArm::wait_j1_j2_arrived(
     std::chrono::duration_cast<clock::duration>(
       std::chrono::duration<double>(params.arrived_timeout_sec));
   const auto poll = std::chrono::milliseconds(params.arrived_poll_ms);
+  const double span_eps = std::max(0.3, params.stationary_span_eps * 6.0);
 
   while (clock::now() < deadline) {
     if (play_cancel_requested_.load()) {
       return false;
     }
-    if (j1_->is_at_target_span(span_j1) && j2_->is_at_target_span(span_j2)) {
+    if (j1_->is_at_target_span(span_j1, span_eps) && j2_->is_at_target_span(span_j2, span_eps)) {
       return true;
     }
     std::this_thread::sleep_for(poll);
@@ -565,7 +577,19 @@ bool RobotArm::play_motion_file(
 
   if (!wait_j1_j2_arrived(params, first.span_j1, first.span_j2)) {
     playing_.store(false);
-  emit(MotionPlayPhase::Error, 0.f, 0, total_segments, "首点到位超时或已取消");
+    std::ostringstream diag;
+    diag << "首点到位超时或已取消";
+    if (const auto s = read_joint_span(*j1_)) {
+      diag << " J1反馈=" << *s << " 目标=" << first.span_j1;
+    } else {
+      diag << " J1反馈读失败";
+    }
+    if (const auto s = read_joint_span(*j2_)) {
+      diag << " J2反馈=" << *s << " 目标=" << first.span_j2;
+    } else {
+      diag << " J2反馈读失败";
+    }
+    emit(MotionPlayPhase::Error, 0.f, 0, total_segments, diag.str());
     return false;
   }
 

@@ -13,9 +13,11 @@ import threading
 import time
 from datetime import datetime, timezone
 from functools import partial
-from typing import Any
+from typing import Any, Callable, Optional
 
 import rclpy
+
+from manual_control.gamepad_reader import GamepadReader
 from rclpy.action import ActionClient
 from action_msgs.msg import GoalStatus
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -32,6 +34,8 @@ try:
         GetMotorState,
         GetMotorSpeedLoopPid,
         SetMotorSpeedLoopPid,
+        GetMotorPositionLoopPid,
+        SetMotorPositionLoopPid,
         StartArmMotionRecording,
         FinishArmMotionRecording,
     )
@@ -115,6 +119,28 @@ def _resolve_motion_recordings_dirs(primary: str) -> list[str]:
             seen.add(path)
             dirs.append(path)
     return dirs
+
+
+def _spans_from_joint_state(
+    msg: JointState, joint_names: list[str],
+) -> Optional[tuple[float, float, float]]:
+    if len(joint_names) != 3:
+        return None
+    positions: list[float] = []
+    if not msg.name:
+        if len(msg.position) < 3:
+            return None
+        return (float(msg.position[0]), float(msg.position[1]), float(msg.position[2]))
+    for i in range(3):
+        name = joint_names[i]
+        try:
+            idx = msg.name.index(name)
+        except ValueError:
+            return None
+        if idx >= len(msg.position):
+            return None
+        positions.append(float(msg.position[idx]))
+    return (positions[0], positions[1], positions[2])
 
 
 _GOAL_STATUS_NAMES = {
@@ -208,6 +234,7 @@ class WebControlPanel(Node):
         self.declare_parameter('chassis_cmd_vel_topic', '/chassis/cmd_vel')
         self.declare_parameter('imu_topic', '/imu/data_raw')
         self.declare_parameter('arm_joint_command_topic', '/arm/joint_command')
+        self.declare_parameter('arm_joint_state_topic', '/arm/joint_state')
         self.declare_parameter('arm_joint_names', ['z', 'j1', 'j2'])
 
         # Web server
@@ -215,8 +242,8 @@ class WebControlPanel(Node):
         self.declare_parameter('web_port', 8080)
 
         # Speeds & steps (tunable via --ros-args)
-        self.declare_parameter('linear_speed_x', 0.15)
-        self.declare_parameter('angular_speed_z', 0.6)
+        self.declare_parameter('linear_speed_x', 0.5)
+        self.declare_parameter('angular_speed_z', math.radians(90.0))
         self.declare_parameter('step_z', 2.0)
         self.declare_parameter('step_j1', 3.0)
         self.declare_parameter('step_j2', 3.0)
@@ -243,10 +270,15 @@ class WebControlPanel(Node):
         self.declare_parameter('panel_log_dir', '~/robot_ws/log/web_panel')
         self.declare_parameter('arm_motion_recordings_dir', _default_arm_motion_recordings_dir())
 
+        # 主控本地手柄（/dev/input/js0，浏览器端仅开关）
+        self.declare_parameter('gamepad_device', '/dev/input/js0')
+        self.declare_parameter('gamepad_enable', False)
+
         # Load params
         self._chassis_topic = str(self.get_parameter('chassis_cmd_vel_topic').value)
         self._imu_topic = str(self.get_parameter('imu_topic').value)
         self._arm_topic = str(self.get_parameter('arm_joint_command_topic').value)
+        self._arm_state_topic = str(self.get_parameter('arm_joint_state_topic').value)
         self._joint_names = list(self.get_parameter('arm_joint_names').value)
         if len(self._joint_names) != 3:
             self._joint_names = ['z', 'j1', 'j2']
@@ -271,6 +303,9 @@ class WebControlPanel(Node):
         self._arm_j1 = float(self.get_parameter('j1_init').value)
         self._arm_j2 = float(self.get_parameter('j2_init').value)
 
+        self._last_arm_state_broadcast = 0.0
+        self._last_arm_state_sent: tuple[float, float, float] | None = None
+
         self._twist_watchdog = float(self.get_parameter('twist_watchdog_sec').value)
         self._twist_keepalive_hz = float(self.get_parameter('twist_keepalive_rate_hz').value)
 
@@ -281,10 +316,18 @@ class WebControlPanel(Node):
             raw_motion_dir if raw_motion_dir else _default_arm_motion_recordings_dir()
         )
 
+        self._teleop_cb_group = ReentrantCallbackGroup()
+        self._feedback_cb_group = ReentrantCallbackGroup()
+
         # Publishers & subscribers
         self._pub_twist = self.create_publisher(Twist, self._chassis_topic, 10)
         self._pub_joint = self.create_publisher(JointState, self._arm_topic, 10)
-        self.create_subscription(Imu, self._imu_topic, self._on_imu, 20)
+        self.create_subscription(
+            JointState, self._arm_state_topic, self._on_arm_joint_state, 20,
+            callback_group=self._feedback_cb_group)
+        self.create_subscription(
+            Imu, self._imu_topic, self._on_imu, 20,
+            callback_group=self._feedback_cb_group)
 
         # Service & Action clients
         self._mode_client = self.create_client(SetDriveMode, '/chassis/set_mode')
@@ -311,6 +354,10 @@ class WebControlPanel(Node):
             GetMotorSpeedLoopPid, '/motor/get_speed_loop_pid', callback_group=self._motor_cb_group)
         self._set_pid_client = self.create_client(
             SetMotorSpeedLoopPid, '/motor/set_speed_loop_pid', callback_group=self._motor_cb_group)
+        self._get_pos_pid_client = self.create_client(
+            GetMotorPositionLoopPid, '/motor/get_position_loop_pid', callback_group=self._motor_cb_group)
+        self._set_pos_pid_client = self.create_client(
+            SetMotorPositionLoopPid, '/motor/set_position_loop_pid', callback_group=self._motor_cb_group)
 
         # Runtime state
         self._current_mode: int = 0  # 0=TWIST, 1=MOVE
@@ -324,6 +371,10 @@ class WebControlPanel(Node):
         self._motion_playing = False
         self._motion_play_action = ''
         self._arm_motion_lock = threading.Lock()
+        self._arm_control_mode = 'angle'  # angle | action（前端同步）
+        self._gamepad_twist_active = False
+        self._gamepad_status_last: dict[str, Any] = {}
+        self._gamepad_status_broadcast_last = 0.0
 
         self._imu_yaw_rad = 0.0
         self._imu_received = False
@@ -346,6 +397,17 @@ class WebControlPanel(Node):
         self._ws_monitor_clients: set[WebSocket] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
 
+        # ROS publish 仅在 executor 的 teleop 定时器内执行
+        self._ros_work_lock = threading.Lock()
+        self._ros_work: list[Callable[[], None]] = []
+        self._pending_twist_pub: Optional[tuple[float, float]] = None
+        self._pending_arm_pub = False
+        self._init_arm_published = False
+        self._status_broadcast_last = 0.0
+        self._link_check_last = 0.0
+        self._last_twist_msg_sent = 0.0
+        self._twist_pub_total = 0
+
         # 电机监控：Python 侧调度（按 motor_id 开关 + 频率）
         self._monitor_slots: dict[int, dict[str, Any]] = {
             mid: {'enabled': False, 'rate_hz': 15.0, 'last_poll': 0.0}
@@ -356,19 +418,69 @@ class WebControlPanel(Node):
         self._monitor_thread = threading.Thread(target=self._monitor_poll_loop, daemon=True)
         self._monitor_thread.start()
 
-        # Watchdog + status timer
-        self.create_timer(0.1, self._watchdog_and_status)
+        gamepad_device = str(self.get_parameter('gamepad_device').value)
+        self._gamepad = GamepadReader(
+            gamepad_device,
+            on_connection_change=self._on_gamepad_connection_change,
+            on_face_button=self._on_gamepad_face_button,
+        )
+        self._gamepad.set_speed_limits(self._lin_speed, self._ang_speed)
+        if _as_bool(self.get_parameter('gamepad_enable').value):
+            self._gamepad.set_enabled(True)
+        self._gamepad.start()
+        self.create_timer(0.045, self._gamepad_tick, callback_group=self._teleop_cb_group)
 
-        # Twist 模式持续 keepalive（无论有无用户输入都循环发，喂饱机器人看门狗）
-        if self._twist_keepalive_hz > 0.1:
-            self.create_timer(1.0 / self._twist_keepalive_hz, self._twist_keepalive)
+        # 唯一 ROS publish 出口 + Twist keepalive（独立可重入组，避免被反馈/状态回调饿死）
+        self.create_timer(0.02, self._process_ros_publishes, callback_group=self._teleop_cb_group)
+        self.create_timer(0.5, self._init_arm_publish_once, callback_group=self._teleop_cb_group)
+        self.create_timer(0.1, self._watchdog_and_status, callback_group=self._teleop_cb_group)
 
         self.get_logger().info(
             f'Web control panel ready. Topics: chassis={self._chassis_topic}, imu={self._imu_topic}, '
-            f'arm={self._arm_topic}. motions_dir={self._motion_recordings_dir}. '
+            f'arm_cmd={self._arm_topic} arm_state={self._arm_state_topic}. '
+            f'motions_dir={self._motion_recordings_dir}. '
+            f'gamepad={gamepad_device}. '
             f'Control UI http://{self.web_host}:{self.web_port}/  Monitor http://{self.web_host}:{self.web_port}/monitor'
         )
-        self._publish_arm()  # initial position
+
+    def _queue_twist_publish(self, linear_x: float, angular_z: float) -> None:
+        with self._ros_work_lock:
+            self._pending_twist_pub = (float(linear_x), float(angular_z))
+
+    def _queue_arm_publish(self) -> None:
+        with self._ros_work_lock:
+            self._pending_arm_pub = True
+
+    def _process_ros_publishes(self) -> None:
+        with self._ros_work_lock:
+            work = self._ros_work
+            self._ros_work = []
+            twist = self._pending_twist_pub
+            self._pending_twist_pub = None
+            arm_pending = self._pending_arm_pub
+            self._pending_arm_pub = False
+        for fn in work:
+            try:
+                fn()
+            except Exception as exc:
+                self.get_logger().error(f'ROS 发布任务失败: {exc}')
+        if twist is not None:
+            self._publish_twist_msg(twist[0], twist[1])
+        if arm_pending:
+            self._publish_arm_msg()
+
+        if self._current_mode == 0 and self._twist_keepalive_hz > 0.1:
+            interval = 1.0 / self._twist_keepalive_hz
+            now = time.monotonic()
+            if now - self._last_twist_msg_sent >= interval * 0.85:
+                lx, az = self._last_twist
+                self._publish_twist_msg(lx, az)
+
+    def _init_arm_publish_once(self) -> None:
+        if self._init_arm_published:
+            return
+        self._init_arm_published = True
+        self._publish_arm_msg()
 
     # ---------------- ROS helpers ----------------
 
@@ -417,6 +529,35 @@ class WebControlPanel(Node):
                 **self._heading_payload(),
             })
 
+    def _on_arm_joint_state(self, msg: JointState) -> None:
+        spans = _spans_from_joint_state(msg, self._joint_names)
+        if spans is None:
+            return
+        z, j1, j2 = spans
+        self._arm_z = _clamp(z, self._z_min, self._z_max)
+        self._arm_j1 = _clamp(j1, self._j1_min, self._j1_max)
+        self._arm_j2 = _clamp(j2, self._j2_min, self._j2_max)
+
+        now = time.monotonic()
+        sent = (self._arm_z, self._arm_j1, self._arm_j2)
+        changed = (
+            self._last_arm_state_sent is None
+            or abs(sent[0] - self._last_arm_state_sent[0]) > 0.05
+            or abs(sent[1] - self._last_arm_state_sent[1]) > 0.05
+            or abs(sent[2] - self._last_arm_state_sent[2]) > 0.05
+        )
+        if not changed and now - self._last_arm_state_broadcast < 0.15:
+            return
+        self._last_arm_state_broadcast = now
+        self._last_arm_state_sent = sent
+        self._safe_broadcast({
+            'type': 'arm',
+            'z': self._arm_z,
+            'j1': self._arm_j1,
+            'j2': self._arm_j2,
+            'feedback': True,
+        })
+
     def _plog_twist(self, linear_x: float, angular_z: float, source: str) -> None:
         now = time.monotonic()
         at_rest = abs(linear_x) < 1e-6 and abs(angular_z) < 1e-6
@@ -435,11 +576,17 @@ class WebControlPanel(Node):
         self._twist_logged = (linear_x, angular_z)
         self._plog('twist', source=source, linear_x=linear_x, angular_z=angular_z)
 
-    def _publish_twist(self, linear_x: float, angular_z: float, *, log_source: str = 'ui') -> None:
+    def _publish_twist_msg(self, linear_x: float, angular_z: float) -> None:
         msg = Twist()
         msg.linear.x = float(linear_x)
         msg.angular.z = float(angular_z)
         self._pub_twist.publish(msg)
+        self._last_twist_msg_sent = time.monotonic()
+        self._twist_pub_total += 1
+
+    def _publish_twist(self, linear_x: float, angular_z: float, *, log_source: str = 'ui') -> None:
+        linear_x = float(linear_x)
+        angular_z = float(angular_z)
         self._last_twist = (linear_x, angular_z)
         self._last_twist_time = time.monotonic()
         self._plog_twist(linear_x, angular_z, log_source)
@@ -448,6 +595,14 @@ class WebControlPanel(Node):
             'linear_x': linear_x,
             'angular_z': angular_z,
         })
+        self._queue_twist_publish(linear_x, angular_z)
+
+    def _publish_arm_msg(self) -> None:
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = self._joint_names
+        msg.position = [self._arm_z, self._arm_j1, self._arm_j2]
+        self._pub_joint.publish(msg)
 
     def _publish_arm(self, z: float | None = None, j1: float | None = None, j2: float | None = None) -> None:
         if z is not None:
@@ -457,36 +612,19 @@ class WebControlPanel(Node):
         if j2 is not None:
             self._arm_j2 = _clamp(j2, self._j2_min, self._j2_max)
 
-        if self._motion_recording:
-            self._safe_broadcast({
-                'type': 'arm',
-                'z': self._arm_z,
-                'j1': self._arm_j1,
-                'j2': self._arm_j2,
-            })
-            return
-
-        if self._motion_playing:
-            self._safe_broadcast({
-                'type': 'arm',
-                'z': self._arm_z,
-                'j1': self._arm_j1,
-                'j2': self._arm_j2,
-            })
-            return
-
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = self._joint_names
-        msg.position = [self._arm_z, self._arm_j1, self._arm_j2]
-        self._pub_joint.publish(msg)
-
         self._safe_broadcast({
             'type': 'arm',
             'z': self._arm_z,
             'j1': self._arm_j1,
             'j2': self._arm_j2,
         })
+
+        if self._motion_recording or self._motion_playing:
+            if z is not None:
+                self._queue_arm_publish()
+            return
+
+        self._queue_arm_publish()
 
     def _watchdog_and_status(self) -> None:
         now = time.monotonic()
@@ -499,7 +637,34 @@ class WebControlPanel(Node):
             )
             self._publish_twist(0.0, 0.0, log_source='watchdog')
 
-        # periodic status push（不含 arm_motions：避免 10Hz 扫盘 + 前端重建按钮导致难点击）
+        if now - self._link_check_last >= 5.0:
+            self._link_check_last = now
+            twist_subs = self._pub_twist.get_subscription_count()
+            arm_subs = self._pub_joint.get_subscription_count()
+            if twist_subs == 0:
+                self.get_logger().warning(
+                    f'底盘话题 {self._chassis_topic} 无订阅者 — robot_platform 可能未运行或 ROS 通信异常'
+                )
+            if arm_subs == 0:
+                self.get_logger().warning(
+                    f'机械臂话题 {self._arm_topic} 无订阅者 — robot_platform 可能未运行或 ROS 通信异常'
+                )
+            if self._current_mode == 0 and twist_subs > 0:
+                stale = time.monotonic() - self._last_twist_msg_sent
+                if stale > 1.0:
+                    self.get_logger().error(
+                        f'Twist 超过 {stale:.1f}s 未 publish（teleop 定时器可能被阻塞）'
+                    )
+            self.get_logger().info(
+                f'ROS 链路: twist订阅={twist_subs} arm订阅={arm_subs} '
+                f'twist已发={self._twist_pub_total}',
+                throttle_duration_sec=5.0,
+            )
+
+        # periodic status push（2Hz，减轻 WebSocket 与 asyncio 压力）
+        if now - self._status_broadcast_last < 0.5:
+            return
+        self._status_broadcast_last = now
         self._safe_broadcast({
             'type': 'status',
             'mode': self._current_mode,
@@ -509,13 +674,6 @@ class WebControlPanel(Node):
             'motion_recording': self._motion_recording,
             'motion_playing': self._motion_playing,
         })
-
-    def _twist_keepalive(self) -> None:
-        """Twist 模式下持续高频发送（含零值），确保机器人 300ms 看门狗不触发。"""
-        if self._current_mode == 0:  # 仅 TWIST 模式需要
-            lx, az = self._last_twist
-            # 直接复用 publish（会更新 last_time，避免 watchdog 误杀）
-            self._publish_twist(lx, az, log_source='keepalive')
 
     # Mode service (blocking wrapper for run_in_executor)
     def _set_mode_blocking(self, mode: int) -> tuple[bool, str]:
@@ -977,6 +1135,131 @@ class WebControlPanel(Node):
     def _chassis_action_busy(self) -> bool:
         return self._active_move_gh is not None or self._active_span_gh is not None
 
+    # ---------------- 主控本地手柄 ----------------
+
+    def _on_gamepad_connection_change(self, connected: bool, name: str) -> None:
+        if connected:
+            self.get_logger().info(f'手柄已连接: {name} ({self._gamepad.device_path})')
+        else:
+            self.get_logger().warn(f'手柄已断开: {self._gamepad.device_path}')
+            if self._gamepad_twist_active:
+                self._gamepad_twist_active = False
+                self._publish_twist(0.0, 0.0, log_source='gamepad')
+        self._broadcast_gamepad_status(force=True)
+
+    def _on_gamepad_face_button(self, action_name: str) -> None:
+        """Y/X/B/A 面键 → 播放同名动作；无同名 CSV 则静默忽略。"""
+        if not self._gamepad.is_enabled():
+            return
+        if action_name not in self._scan_arm_motions():
+            return
+        if self._motion_recording or self._motion_playing:
+            return
+        path = self._find_latest_motion_csv(action_name)
+        if not path:
+            return
+        threading.Thread(
+            target=self._gamepad_play_motion_worker,
+            args=(path, action_name),
+            daemon=True,
+            name=f'gamepad_play_{action_name}',
+        ).start()
+
+    def _gamepad_play_motion_worker(self, file_path: str, action_name: str) -> None:
+        self._safe_broadcast({
+            'type': 'play_motion_ack',
+            'action_name': action_name,
+            'message': f'手柄请求播放「{action_name}」',
+        })
+        ok, msg = self._send_play_motion_blocking(file_path, action_name)
+        payload = {
+            'type': 'action_result',
+            'action': 'play_motion',
+            'success': ok,
+            'message': msg,
+        }
+        if ok:
+            self.get_logger().info(f'手柄播放「{action_name}」: {msg}')
+        else:
+            self.get_logger().warn(f'手柄播放「{action_name}」失败: {msg}')
+        self._safe_broadcast(payload)
+
+    def _gamepad_allow_reason(self) -> tuple[bool, str]:
+        if not self._gamepad.is_enabled():
+            return False, '未开启'
+        if not self._gamepad.is_connected():
+            return False, '未连接手柄'
+        if self._current_mode != 0:
+            return False, '底盘 MOVE 模式'
+        if self._chassis_action_busy():
+            return False, '底盘 Action 执行中'
+        if self._motion_playing:
+            return False, '机械臂动作播放中'
+        return True, ''
+
+    def _gamepad_status_payload(self) -> dict[str, Any]:
+        allowed, reason = self._gamepad_allow_reason()
+        lx, az, sx, sy = self._gamepad.compute_twist()
+        moving = abs(lx) > 1e-4 or abs(az) > 1e-4
+        return {
+            'type': 'gamepad_status',
+            'enabled': self._gamepad.is_enabled(),
+            'connected': self._gamepad.is_connected(),
+            'device_name': self._gamepad.device_name(),
+            'block_reason': reason if self._gamepad.is_enabled() else '',
+            'active': allowed and moving,
+            'stick_x': float(sx) if allowed else 0.0,
+            'stick_y': float(sy) if allowed else 0.0,
+        }
+
+    def _broadcast_gamepad_status(self, *, force: bool = False) -> None:
+        payload = self._gamepad_status_payload()
+        key_fields = ('enabled', 'connected', 'device_name', 'block_reason', 'active')
+        changed = any(self._gamepad_status_last.get(k) != payload.get(k) for k in key_fields)
+        now = time.monotonic()
+        if not force and not changed and now - self._gamepad_status_broadcast_last < 2.0:
+            return
+        self._gamepad_status_last = dict(payload)
+        self._gamepad_status_broadcast_last = now
+        self._safe_broadcast(payload)
+
+    def _gamepad_release_twist(self) -> None:
+        if not self._gamepad_twist_active:
+            return
+        self._gamepad_twist_active = False
+        self._publish_twist(0.0, 0.0, log_source='gamepad')
+
+    def _gamepad_tick(self) -> None:
+        allowed, _reason = self._gamepad_allow_reason()
+        lx, az, sx, sy = self._gamepad.compute_twist()
+        moving = abs(lx) > 1e-4 or abs(az) > 1e-4
+
+        if allowed and moving:
+            self._gamepad_twist_active = True
+            self._publish_twist(lx, az, log_source='gamepad')
+        elif self._gamepad_twist_active:
+            self._gamepad_release_twist()
+
+        payload = self._gamepad_status_payload()
+        stick_changed = (
+            abs(payload.get('stick_x', 0.0) - self._gamepad_status_last.get('stick_x', 0.0)) > 0.05
+            or abs(payload.get('stick_y', 0.0) - self._gamepad_status_last.get('stick_y', 0.0)) > 0.05
+        )
+        self._broadcast_gamepad_status(force=stick_changed and payload.get('active'))
+
+    def _set_gamepad_enabled(self, enabled: bool) -> None:
+        self._gamepad.set_enabled(enabled)
+        if not enabled:
+            self._gamepad_release_twist()
+        self._broadcast_gamepad_status(force=True)
+
+    def _set_arm_control_mode(self, mode: str) -> None:
+        self._arm_control_mode = 'action' if mode == 'action' else 'angle'
+        self._broadcast_gamepad_status(force=True)
+
+    def _set_ui_speed_limits(self, linear_mps: float, angular_deg_s: float) -> None:
+        self._gamepad.set_speed_limits(linear_mps, math.radians(angular_deg_s))
+
     # Thread-safe broadcast from ROS callbacks
     def _safe_broadcast(self, msg: dict[str, Any]) -> None:
         if self._loop is None:
@@ -1162,6 +1445,35 @@ class WebControlPanel(Node):
         )
         return True, res.message or 'ok', int(res.p), int(res.i), int(res.d)
 
+    def _get_pos_pid_blocking(self, motor_id: int) -> tuple[bool, str, int, int, int]:
+        if not self._get_pos_pid_client.wait_for_service(timeout_sec=2.0):
+            return False, '服务 /motor/get_position_loop_pid 不可用', 0, 0, 0
+        req = GetMotorPositionLoopPid.Request()
+        req.motor_id = int(motor_id) & 0xFF
+        fut = self._get_pos_pid_client.call_async(req)
+        if not self._wait_for_future(fut, 3.0):
+            return False, '读取位置环 PID 超时', 0, 0, 0
+        res = fut.result()
+        if res is None or not res.success:
+            return False, res.message if res else '无响应', 0, 0, 0
+        return True, res.message or 'ok', int(res.p), int(res.i), int(res.d)
+
+    def _set_pos_pid_blocking(self, motor_id: int, p: int, i: int, d: int) -> tuple[bool, str, int, int, int]:
+        if not self._set_pos_pid_client.wait_for_service(timeout_sec=2.0):
+            return False, '服务 /motor/set_position_loop_pid 不可用', 0, 0, 0
+        req = SetMotorPositionLoopPid.Request()
+        req.motor_id = int(motor_id) & 0xFF
+        req.p = int(p)
+        req.i = int(i)
+        req.d = int(d)
+        fut = self._set_pos_pid_client.call_async(req)
+        if not self._wait_for_future(fut, 3.0):
+            return False, '设置位置环 PID 超时', 0, 0, 0
+        res = fut.result()
+        if res is None or not res.success:
+            return False, res.message if res else '无响应', 0, 0, 0
+        return True, res.message or 'ok', int(res.p), int(res.i), int(res.d)
+
     def _set_pid_blocking(self, motor_id: int, p: int, i: int, d: int) -> tuple[bool, str, int, int, int]:
         self._plog('set_pid_request', motor_id=int(motor_id), p=int(p), i=int(i), d=int(d))
         if not self._set_pid_client.wait_for_service(timeout_sec=2.0):
@@ -1197,7 +1509,7 @@ class WebControlPanel(Node):
 
     async def handle_ws_command(self, ws: WebSocket, cmd: dict[str, Any]) -> None:
         t = cmd.get('type')
-        if t not in ('set_twist', 'ping'):
+        if t not in ('set_twist', 'ping', 'set_speed_limits'):
             self._plog('ws_cmd', cmd_type=t, cmd=cmd)
         try:
             if t == 'set_twist':
@@ -1225,6 +1537,8 @@ class WebControlPanel(Node):
                 mode = int(cmd.get('mode', 0))
                 prev_mode = self._current_mode
                 self._current_mode = mode
+                if mode != 0:
+                    self._gamepad_release_twist()
                 self._safe_broadcast({'type': 'mode', 'mode': mode})
                 loop = asyncio.get_running_loop()
                 success, message = await loop.run_in_executor(
@@ -1399,6 +1713,19 @@ class WebControlPanel(Node):
             elif t == 'ping':
                 await ws.send_text(json.dumps({'type': 'pong', 't': time.time()}, ensure_ascii=False))
 
+            elif t == 'set_gamepad_enabled':
+                self._set_gamepad_enabled(_as_bool(cmd.get('enabled', False)))
+                await self._ws_send_json(ws, self._gamepad_status_payload())
+
+            elif t == 'set_arm_control_mode':
+                self._set_arm_control_mode(str(cmd.get('mode', 'angle')))
+                await self._ws_send_json(ws, self._gamepad_status_payload())
+
+            elif t == 'set_speed_limits':
+                lin = float(cmd.get('linear_mps', self._lin_speed))
+                ang_deg = float(cmd.get('angular_deg_s', math.degrees(self._ang_speed)))
+                self._set_ui_speed_limits(lin, ang_deg)
+
             else:
                 await self._ws_send_json(ws, {'type': 'error', 'message': f'未知命令: {t}'})
         except WebSocketDisconnect:
@@ -1490,6 +1817,41 @@ class WebControlPanel(Node):
                 )
                 await ws.send_text(json.dumps({
                     'type': 'pid_result',
+                    'motor_id': mid,
+                    'success': ok,
+                    'message': msg,
+                    'p': rp,
+                    'i': ri,
+                    'd': rd,
+                }, ensure_ascii=False))
+
+            elif t == 'get_pos_pid':
+                mid = int(cmd.get('motor_id', 0))
+                loop = asyncio.get_running_loop()
+                ok, msg, p, i, d = await loop.run_in_executor(
+                    None, partial(self._get_pos_pid_blocking, mid)
+                )
+                await ws.send_text(json.dumps({
+                    'type': 'pos_pid_result',
+                    'motor_id': mid,
+                    'success': ok,
+                    'message': msg,
+                    'p': p,
+                    'i': i,
+                    'd': d,
+                }, ensure_ascii=False))
+
+            elif t == 'set_pos_pid':
+                mid = int(cmd.get('motor_id', 0))
+                p = int(cmd.get('p', 0))
+                i = int(cmd.get('i', 0))
+                d = int(cmd.get('d', 0))
+                loop = asyncio.get_running_loop()
+                ok, msg, rp, ri, rd = await loop.run_in_executor(
+                    None, partial(self._set_pos_pid_blocking, mid, p, i, d)
+                )
+                await ws.send_text(json.dumps({
+                    'type': 'pos_pid_result',
                     'motor_id': mid,
                     'success': ok,
                     'message': msg,
@@ -1707,7 +2069,13 @@ def create_app(node: WebControlPanel) -> FastAPI:
             'arm_motions': node._scan_arm_motions(),
             'motion_recording': node._motion_recording,
             'motion_playing': node._motion_playing,
+            'gamepad': {
+                'enabled': node._gamepad.is_enabled(),
+                'connected': node._gamepad.is_connected(),
+                'device_name': node._gamepad.device_name(),
+            },
         }, ensure_ascii=False))
+        await websocket.send_text(json.dumps(node._gamepad_status_payload(), ensure_ascii=False))
 
         try:
             while True:
@@ -1753,9 +2121,9 @@ def main(args: list[str] | None = None) -> None:
     node = WebControlPanel()
     app = create_app(node)
 
-    executor = MultiThreadedExecutor(num_threads=4)
+    executor = MultiThreadedExecutor(num_threads=6)
     executor.add_node(node)
-    spin_thread = threading.Thread(target=executor.spin, daemon=True)
+    spin_thread = threading.Thread(target=executor.spin, daemon=True, name='web_panel_ros_spin')
     spin_thread.start()
 
     host = node.web_host

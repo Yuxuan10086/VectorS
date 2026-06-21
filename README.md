@@ -84,8 +84,9 @@
 
 | 子目录 | ROS 包名 | 说明 |
 |--------|----------|------|
-| `scan_safety/` | `scan_safety` | LaserScan 避障，见包内 `README.md` |
-| `robot_platform/` | `robot_platform` | 共用 CAN，装配底盘 + 机械臂，见包内 `README.md` |
+| `robot_interfaces/` | `robot_interfaces` | 自定义 msg/srv/action，见 **`robot_control/README.md`** |
+| `robot_platform/` | `robot_platform` | 整机硬件节点，见 **`robot_control/README.md`** |
+| `manual_control/` | `manual_control` | Web 控制面板，见包内 `README.md` |
 
 **`robot_driver/` 子包**
 
@@ -98,15 +99,18 @@
 
 ### 2.2 `robot_driver` 子包
 
-- **`motor`**：CAN 与 Pd42 协议。
-- **`chassis`**、**`scara_arm`**：设备 SDK，供 `robot_platform` 链接。
-- **`oradar_lidar`**：激光雷达驱动。
+- 模块说明：**`robot_driver/README.md`**（各包接口总表）
+- **`motor`**：CAN 与 Pd42 协议（C++ 库，无 ROS）
+- **`chassis`**、**`scara_arm`**：设备 SDK，供 `robot_platform` 链接
+- **`wit_ros2_imu`**：IMU 节点，发布 `/imu/data_raw`
+- **`oradar_lidar`**：激光雷达，发布 `/scan` 等
 
 ### 2.3 `robot_control` 子包
 
-- 模块说明：`robot_control/README.md`
-- **`robot_platform`**：`Platform` 打开 CAN 并实例化 `chassis` + `scara_arm`；launch 加载 `chassis.yaml` + `scara_arm.yaml`
-- **`scan_safety`**：避障，见 `robot_control/scan_safety/README.md`
+- 模块说明：**`robot_control/README.md`**（各包 ROS 接口总表）
+- **`robot_interfaces`**：接口定义
+- **`robot_platform`**：`platform_node`（底盘 + 机械臂 + IMU + TF）
+- **`manual_control`**：Web 控制面板
 
 ---
 

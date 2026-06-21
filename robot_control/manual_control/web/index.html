@@ -260,18 +260,37 @@
             <div>
               <div class="flex justify-between items-baseline mb-1 px-0.5">
                 <div class="slider-label">线速度上限</div>
-                <div id="lin-speed-val" class="font-mono text-xs text-blue-400">0.15 m/s</div>
+                <div id="lin-speed-val" class="font-mono text-xs text-blue-400">0.50 m/s</div>
               </div>
-              <input type="range" id="lin-speed-slider" min="0.02" max="0.6" step="0.01" value="0.15"
+              <input type="range" id="lin-speed-slider" min="0.02" max="1.0" step="0.01" value="0.5"
                      class="w-full accent-blue-500" oninput="updateSpeedLimits()">
             </div>
             <div>
               <div class="flex justify-between items-baseline mb-1 px-0.5">
                 <div class="slider-label">角速度上限</div>
-                <div id="ang-speed-val" class="font-mono text-xs text-blue-400">34 °/s</div>
+                <div id="ang-speed-val" class="font-mono text-xs text-blue-400">90 °/s</div>
               </div>
-              <input type="range" id="ang-speed-slider" min="5" max="145" step="1" value="34"
+              <input type="range" id="ang-speed-slider" min="5" max="145" step="1" value="90"
                      class="w-full accent-blue-500" oninput="updateSpeedLimits()">
+            </div>
+
+            <!-- 物理手柄（接在主控本地 /dev/input/js0，见 tool/gamepad_mapping.yaml） -->
+            <div class="pt-2 border-t border-slate-800/80">
+              <label class="flex items-center justify-between gap-3 cursor-pointer select-none">
+                <div class="flex items-center gap-2 text-[11px] text-slate-300">
+                  <i class="fa-solid fa-gamepad text-slate-500"></i>
+                  <span>物理手柄（主控本地）</span>
+                </div>
+                <button id="btn-gamepad-toggle" type="button" role="switch" aria-checked="false"
+                        onclick="toggleGamepadEnabled()"
+                        class="relative w-11 h-6 rounded-full bg-slate-700 border border-slate-600 transition-colors">
+                  <span id="gamepad-toggle-knob"
+                        class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-slate-300 shadow transition-transform"></span>
+                </button>
+              </label>
+              <div id="gamepad-status" class="text-[10px] text-slate-500 mt-1.5 px-0.5 leading-relaxed">
+                手柄接在主控；右摇杆=底盘，左十字=前后左右；Y/X/B/A=同名动作（无则无效）
+              </div>
             </div>
 
             <!-- Quick direction buttons -->
@@ -348,9 +367,8 @@
           </div>
         </div>
 
-        <!-- 角度模式：拉杆控制 -->
-        <div id="arm-angle-controls" class="space-y-4">
-          <!-- Z -->
+        <!-- Z 轴（角度/动作模式共用，同一组控件） -->
+        <div id="arm-z-controls" class="mb-4">
           <div>
             <div class="flex justify-between text-xs mb-1 px-0.5">
               <div class="flex items-center gap-x-2"><span class="font-semibold text-sky-400">Z</span> <span class="text-slate-400 text-[10px]">升降</span></div>
@@ -367,7 +385,10 @@
               </div>
             </div>
           </div>
+        </div>
 
+        <!-- 角度模式：J1/J2 拉杆 -->
+        <div id="arm-angle-controls" class="space-y-4">
           <!-- J1 -->
           <div>
             <div class="flex justify-between text-xs mb-1 px-0.5">
@@ -419,6 +440,10 @@
 
         <!-- 动作模式：录制与播放 -->
         <div id="arm-action-controls" class="hidden space-y-4">
+          <div class="flex gap-4 text-xs px-1 mb-1">
+            <span>实际 J1 <span id="arm-action-j1-val" class="font-mono text-amber-400 metric">90.0°</span></span>
+            <span>实际 J2 <span id="arm-action-j2-val" class="font-mono text-violet-400 metric">90.0°</span></span>
+          </div>
           <div class="bg-slate-900/70 border border-slate-700 rounded-2xl p-3">
             <div class="text-xs text-slate-300 mb-2 font-medium">动作录制（J1/J2 零力矩拖动）</div>
             <div class="flex gap-2 mb-2">
@@ -571,7 +596,7 @@
                   </div>
                   <div class="flex-1">
                     <div class="text-[10px] text-slate-400 mb-px">角速度 (°/s)</div>
-                    <input id="span-omega" type="number" step="1" value="34" class="w-full bg-slate-950 border border-slate-600 focus:border-amber-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
+                    <input id="span-omega" type="number" step="1" value="90" class="w-full bg-slate-950 border border-slate-600 focus:border-amber-400 text-sm rounded-2xl px-3 py-1.5 font-mono">
                   </div>
                   <div class="flex gap-x-1">
                     <button id="btn-span-send" data-action-send="span" onclick="sendSpanAction()" 
@@ -650,7 +675,7 @@
     /** 角速度上限滑条为 °/s，发 ROS 前转 rad/s */
     function getMaxAngRad() {
       const degPerSec = parseFloat(document.getElementById('ang-speed-slider').value);
-      return (Number.isFinite(degPerSec) ? degPerSec : 34) * DEG2RAD;
+      return (Number.isFinite(degPerSec) ? degPerSec : 90) * DEG2RAD;
     }
     let lastPing = 0;
     let reconnectTimer = null;
@@ -660,6 +685,137 @@
 
     let holdInterval = null;
     let currentHoldDir = null;
+
+    // ===== 物理手柄（主控本地 /dev/input/js0，浏览器仅开关） =====
+    const GAMEPAD_STORAGE_KEY = 'robot_panel_gamepad_enabled';
+
+    let gamepadEnabled = false;
+    let gamepadConnected = false;
+    let gamepadDeviceName = '';
+    let gamepadBlockReason = '';
+    let gamepadActive = false;
+
+    function loadGamepadEnabledPref() {
+      try {
+        return localStorage.getItem(GAMEPAD_STORAGE_KEY) === '1';
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function saveGamepadEnabledPref(on) {
+      try {
+        localStorage.setItem(GAMEPAD_STORAGE_KEY, on ? '1' : '0');
+      } catch (_) { /* ignore */ }
+    }
+
+    function syncSpeedLimitsToServer() {
+      const lin = parseFloat(document.getElementById('lin-speed-slider')?.value) || 0.5;
+      const angDeg = parseFloat(document.getElementById('ang-speed-slider')?.value) || 90;
+      sendWS({ type: 'set_speed_limits', linear_mps: lin, angular_deg_s: angDeg });
+    }
+
+    function syncArmControlModeToServer() {
+      sendWS({ type: 'set_arm_control_mode', mode: armControlMode });
+    }
+
+    function syncGamepadPrefToServer() {
+      if (loadGamepadEnabledPref()) {
+        sendWS({ type: 'set_gamepad_enabled', enabled: true });
+      }
+      syncSpeedLimitsToServer();
+      syncArmControlModeToServer();
+    }
+
+    function applyGamepadStatus(msg) {
+      if (msg.enabled !== undefined) gamepadEnabled = !!msg.enabled;
+      if (msg.connected !== undefined) gamepadConnected = !!msg.connected;
+      if (msg.device_name !== undefined) gamepadDeviceName = msg.device_name || '';
+      if (msg.block_reason !== undefined) gamepadBlockReason = msg.block_reason || '';
+      if (msg.active !== undefined) gamepadActive = !!msg.active;
+      updateGamepadUI();
+      if (!joystickActive && msg.stick_x !== undefined) {
+        if (msg.active) setJoystickVisualNorm(msg.stick_x, msg.stick_y);
+        else if (!currentHoldDir) resetJoystickVisualIfIdle();
+      }
+    }
+
+    function setJoystickVisualNorm(nx, ny) {
+      const area = document.getElementById('joystick-area');
+      const knob = document.getElementById('joystick-knob');
+      if (!area || !knob || joystickActive) return;
+      const rect = area.getBoundingClientRect();
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const radius = Math.min(rect.width, rect.height) * 0.38;
+      const dx = Math.max(-1, Math.min(1, nx)) * radius;
+      const dy = Math.max(-1, Math.min(1, ny)) * radius;
+      knob.style.left = (cx + dx) + 'px';
+      knob.style.top = (cy + dy) + 'px';
+      knob.style.transform = 'translate(-50%, -50%)';
+      currentJoystickVector.x = nx;
+      currentJoystickVector.y = ny;
+    }
+
+    function resetJoystickVisualIfIdle() {
+      if (joystickActive) return;
+      const knob = document.getElementById('joystick-knob');
+      if (!knob) return;
+      knob.style.left = '50%';
+      knob.style.top = '50%';
+      knob.style.transform = 'translate(-50%, -50%)';
+      currentJoystickVector.x = 0;
+      currentJoystickVector.y = 0;
+    }
+
+    function updateGamepadUI() {
+      const btn = document.getElementById('btn-gamepad-toggle');
+      const knob = document.getElementById('gamepad-toggle-knob');
+      const status = document.getElementById('gamepad-status');
+      if (btn) {
+        btn.setAttribute('aria-checked', gamepadEnabled ? 'true' : 'false');
+        btn.classList.toggle('bg-emerald-600', gamepadEnabled);
+        btn.classList.toggle('border-emerald-500', gamepadEnabled);
+        btn.classList.toggle('bg-slate-700', !gamepadEnabled);
+        btn.classList.toggle('border-slate-600', !gamepadEnabled);
+      }
+      if (knob) {
+        knob.style.transform = gamepadEnabled ? 'translateX(1.25rem)' : 'translateX(0)';
+        knob.classList.toggle('bg-white', gamepadEnabled);
+      }
+      if (!status) return;
+
+      const name = gamepadDeviceName || 'Gamepad';
+      if (!gamepadEnabled) {
+        status.textContent = gamepadConnected
+          ? `主控已连接 ${name}，开关未开启`
+          : '主控未检测到手柄；请插到机器人主控 USB';
+        status.className = 'text-[10px] text-slate-500 mt-1.5 px-0.5 leading-relaxed';
+        return;
+      }
+      if (gamepadBlockReason) {
+        status.textContent = `手柄已禁用：${gamepadBlockReason}`;
+        status.className = 'text-[10px] text-amber-400/90 mt-1.5 px-0.5 leading-relaxed';
+        return;
+      }
+      status.textContent = gamepadActive
+        ? `手柄控制中 · ${name}（右摇杆+左十字键）`
+        : `手柄待命 · ${name}（速度同滑块上限）`;
+      status.className = 'text-[10px] text-emerald-400/90 mt-1.5 px-0.5 leading-relaxed';
+    }
+
+    function toggleGamepadEnabled() {
+      const next = !gamepadEnabled;
+      gamepadEnabled = next;
+      saveGamepadEnabledPref(next);
+      sendWS({ type: 'set_gamepad_enabled', enabled: next });
+      updateGamepadUI();
+      log(next ? '已请求开启主控本地手柄' : '已请求关闭主控本地手柄', 'info');
+    }
+
+    function setupGamepad() {
+      updateGamepadUI();
+    }
 
     const LOG_CONTAINER = () => document.getElementById('log-container');
 
@@ -735,6 +891,7 @@
         statusActionBusySynced = false;
         updateWSStatus(true);
         log('WebSocket 已连接到控制面板后端', 'success');
+        syncGamepadPrefToServer();
         // start heartbeat
         startHeartbeat();
       };
@@ -780,6 +937,7 @@
     let calibState = { z: false, j1: false, j2: false, inProgress: false };
     /** 机械臂前端控制模式：angle=拉杆，action=动作录制/播放 */
     let armControlMode = 'angle';
+    let armSliderDragging = false;
     let motionRecording = false;
     let motionPlaying = false;
     let motionPlayAction = '';
@@ -802,6 +960,7 @@
     function setBlockingActionBusy(busy) {
       blockingActionBusy = !!busy;
       updateMoveSpanControls();
+      updateGamepadUI();
     }
 
     function isActionAcceptedMessage(message) {
@@ -849,6 +1008,7 @@
         btnMove.className = MODE_BTN_BASE + MODE_BTN_ACTIVE_MOVE;
       }
       updateMoveSpanControls();
+      updateGamepadUI();
     }
 
     function updateCalibUI(fb = null) {
@@ -890,7 +1050,7 @@
           updateModeUI(msg.mode);
         }
         if (msg.arm) {
-          updateArmDisplay(msg.arm.z, msg.arm.j1, msg.arm.j2, false);
+          applyArmFeedback(msg.arm.z, msg.arm.j1, msg.arm.j2);
         }
         if (msg.twist) {
           updateTwistDisplay(msg.twist.linear_x, msg.twist.angular_z);
@@ -916,6 +1076,12 @@
           updateArmMotionButtonsDisabled();
           updateMotionRecordUI();
         }
+        if (msg.gamepad) {
+          applyGamepadStatus(msg.gamepad);
+        }
+      }
+      else if (msg.type === 'gamepad_status') {
+        applyGamepadStatus(msg);
       }
       else if (msg.type === 'arm_motions') {
         if (msg.actions) {
@@ -945,7 +1111,7 @@
         updateTwistDisplay(msg.linear_x, msg.angular_z);
       }
       else if (msg.type === 'arm') {
-        updateArmDisplay(msg.z, msg.j1, msg.j2, false);
+        applyArmFeedback(msg.z, msg.j1, msg.j2);
       }
       else if (msg.type === 'mode') {
         updateModeUI(msg.mode);
@@ -1041,7 +1207,7 @@
         updateMotionPlayProgressUI(pct, detail);
         if (msg.span_j1 !== undefined && msg.span_j2 !== undefined) {
           const z = msg.z !== undefined ? msg.z : parseFloat(document.getElementById('arm-z-val')?.textContent || '0');
-          updateArmDisplay(z, msg.span_j1, msg.span_j2, false);
+          applyArmFeedback(z, msg.span_j1, msg.span_j2);
         }
         updateArmMotionButtonsDisabled();
         updateMotionRecordUI();
@@ -1133,7 +1299,7 @@
       if (!joystickSendInterval) {
         joystickSendInterval = setInterval(() => {
           if (joystickActive && wsConnected) {
-            const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.15;
+            const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.5;
             const maxAng = getMaxAngRad();
             
             // 屏幕坐标：上=前进、左=左转（与方向键 / ROS angular.z 一致）
@@ -1210,7 +1376,7 @@
       currentHoldDir = dir;
       if (holdInterval) clearInterval(holdInterval);
 
-      const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.15;
+      const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.5;
       const maxAng = getMaxAngRad();
 
       function sendCurrent() {
@@ -1270,6 +1436,8 @@
       }
       updateMotionRecordUI();
       updateArmMotionButtonsDisabled();
+      syncArmControlModeToServer();
+      updateGamepadUI();
     }
 
     function setMotionPlayProgressVisible(show) {
@@ -1475,10 +1643,34 @@
       }, 15000);
     }
 
+    function applyArmFeedback(z, j1, j2) {
+      const syncSliders = armControlMode === 'action' || !armSliderDragging;
+      updateArmDisplay(z, j1, j2, syncSliders);
+    }
+
+    function setupArmSliderDragGuard() {
+      ['arm-z-controls', 'arm-angle-controls'].forEach(id => {
+        const root = document.getElementById(id);
+        if (!root) return;
+        root.addEventListener('pointerdown', (e) => {
+          if (e.target && e.target.matches('input[type="range"]')) armSliderDragging = true;
+        });
+        root.addEventListener('pointerup', () => { armSliderDragging = false; });
+        root.addEventListener('pointercancel', () => { armSliderDragging = false; });
+        root.addEventListener('pointerleave', (e) => {
+          if (!root.contains(e.relatedTarget)) armSliderDragging = false;
+        });
+      });
+    }
+
     function updateArmDisplay(z, j1, j2, updateSliders = true) {
       document.getElementById('arm-z-val').textContent = Number(z).toFixed(1);
       document.getElementById('arm-j1-val').textContent = Number(j1).toFixed(1) + '°';
       document.getElementById('arm-j2-val').textContent = Number(j2).toFixed(1) + '°';
+      const actionJ1 = document.getElementById('arm-action-j1-val');
+      const actionJ2 = document.getElementById('arm-action-j2-val');
+      if (actionJ1) actionJ1.textContent = Number(j1).toFixed(1) + '°';
+      if (actionJ2) actionJ2.textContent = Number(j2).toFixed(1) + '°';
 
       if (updateSliders) {
         document.getElementById('arm-z-slider').value = z;
@@ -1488,19 +1680,22 @@
     }
 
     function onArmSliderInput(axis) {
-      if (armControlMode !== 'angle') return;
+      if (axis !== 'z' && armControlMode !== 'angle') return;
       const z = parseFloat(document.getElementById('arm-z-slider').value);
       const j1 = parseFloat(document.getElementById('arm-j1-slider').value);
       const j2 = parseFloat(document.getElementById('arm-j2-slider').value);
 
       updateArmDisplay(z, j1, j2, false);
 
-      // send live (throttled by server rate)
-      sendWS({ type: 'set_arm', z: z, j1: j1, j2: j2 });
+      if (axis === 'z' && armControlMode === 'action') {
+        sendWS({ type: 'set_arm', z: z });
+      } else {
+        sendWS({ type: 'set_arm', z: z, j1: j1, j2: j2 });
+      }
     }
 
     function armStep(axis, delta) {
-      if (armControlMode !== 'angle') return;
+      if (axis !== 'z' && armControlMode !== 'angle') return;
       let z = parseFloat(document.getElementById('arm-z-slider').value);
       let j1 = parseFloat(document.getElementById('arm-j1-slider').value);
       let j2 = parseFloat(document.getElementById('arm-j2-slider').value);
@@ -1583,6 +1778,7 @@
       const angDeg = parseFloat(document.getElementById('ang-speed-slider').value);
       document.getElementById('lin-speed-val').textContent = lin.toFixed(2) + ' m/s';
       document.getElementById('ang-speed-val').textContent = Math.round(angDeg) + ' °/s';
+      syncSpeedLimitsToServer();
     }
 
     // ===== MODE & ACTIONS =====
@@ -1650,7 +1846,7 @@
         if (keys[e.key]) return;
         keys[e.key] = true;
 
-        const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.15;
+        const maxLin = parseFloat(document.getElementById('lin-speed-slider').value) || 0.5;
         const maxAng = getMaxAngRad();
 
         if (e.key.toLowerCase() === 'w') sendWS({type:'set_twist', linear_x: maxLin, angular_z: 0});
@@ -1691,6 +1887,10 @@
 
       // keyboard
       setupKeyboard();
+
+      // 物理手柄（Gamepad API）
+      setupGamepad();
+      setupArmSliderDragGuard();
 
       // initial log
       setTimeout(() => {

@@ -87,6 +87,11 @@ bool Pd42Motor::set_speed_loop_pid(std::uint32_t p, std::uint32_t i, std::uint32
   return send_cmd(make_set_speed_loop_pid_frame(motor_id_, p, i, d)).has_value();
 }
 
+bool Pd42Motor::set_position_loop_pid(std::uint32_t p, std::uint32_t i, std::uint32_t d)
+{
+  return send_cmd(make_set_position_loop_pid_frame(motor_id_, p, i, d)).has_value();
+}
+
 std::optional<Pd42SpeedLoopPid> Pd42Motor::read_speed_loop_pid()
 {
   auto reply = send_cmd(make_read_speed_loop_pid_frame(motor_id_));
@@ -94,6 +99,19 @@ std::optional<Pd42SpeedLoopPid> Pd42Motor::read_speed_loop_pid()
     return std::nullopt;
   }
   if (auto v = parse_read_speed_loop_pid(*reply)) {
+    return v;
+  }
+  error_code_ = kErrReplyMismatch;
+  return std::nullopt;
+}
+
+std::optional<Pd42PositionLoopPid> Pd42Motor::read_position_loop_pid()
+{
+  auto reply = send_cmd(make_read_position_loop_pid_frame(motor_id_));
+  if (!reply) {
+    return std::nullopt;
+  }
+  if (auto v = parse_read_position_loop_pid(*reply)) {
     return v;
   }
   error_code_ = kErrReplyMismatch;

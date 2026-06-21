@@ -2,5 +2,7 @@
   ros__parameters:
     chassis_cmd_vel_topic: "/chassis/cmd_vel"
     arm_joint_command_topic: "/arm/joint_command"
+    arm_joint_state_topic: "/arm/joint_state"
+    arm_joint_state_rate_hz: 10.0
     arm_joint_names: ["z", "j1", "j2"]
     imu_topic: "/imu/data_raw"

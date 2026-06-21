@@ -5,6 +5,8 @@
 #include "robot_interfaces/srv/get_motor_state.hpp"
 #include "robot_interfaces/srv/get_motor_speed_loop_pid.hpp"
 #include "robot_interfaces/srv/set_motor_speed_loop_pid.hpp"
+#include "robot_interfaces/srv/get_motor_position_loop_pid.hpp"
+#include "robot_interfaces/srv/set_motor_position_loop_pid.hpp"
 #include "robot_interfaces/action/chassis_move.hpp"
 #include "robot_interfaces/action/chassis_span.hpp"
 #include "robot_interfaces/action/arm_calibrate.hpp"
@@ -26,6 +28,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <functional>
 #include <mutex>
@@ -299,15 +302,25 @@ int main(int argc, char ** argv)
   if (!node->has_parameter("arm_joint_names")) {
     node->declare_parameter<std::vector<std::string>>("arm_joint_names", {"z", "j1", "j2"});
   }
+  if (!node->has_parameter("arm_joint_state_topic")) {
+    node->declare_parameter<std::string>("arm_joint_state_topic", "/arm/joint_state");
+  }
+  if (!node->has_parameter("arm_joint_state_rate_hz")) {
+    node->declare_parameter<double>("arm_joint_state_rate_hz", 10.0);
+  }
   if (!node->has_parameter("imu_topic")) {
     node->declare_parameter<std::string>("imu_topic", "/imu/data_raw");
   }
   std::string chassis_topic;
   std::string arm_topic;
+  std::string arm_state_topic;
+  double arm_state_rate_hz = 10.0;
   std::vector<std::string> arm_joint_names;
   std::string imu_topic;
   node->get_parameter("chassis_cmd_vel_topic", chassis_topic);
   node->get_parameter("arm_joint_command_topic", arm_topic);
+  node->get_parameter("arm_joint_state_topic", arm_state_topic);
+  node->get_parameter("arm_joint_state_rate_hz", arm_state_rate_hz);
   node->get_parameter("arm_joint_names", arm_joint_names);
   node->get_parameter("imu_topic", imu_topic);
 
@@ -426,7 +439,67 @@ int main(int argc, char ** argv)
       res->d = pid->d;
     });
 
+  auto get_pos_pid_srv = node->create_service<robot_interfaces::srv::GetMotorPositionLoopPid>(
+    "/motor/get_position_loop_pid",
+    [&node, lookup_motor](const std::shared_ptr<robot_interfaces::srv::GetMotorPositionLoopPid::Request> req,
+                          std::shared_ptr<robot_interfaces::srv::GetMotorPositionLoopPid::Response> res) {
+      auto * motor = lookup_motor(req->motor_id);
+      if (!motor) {
+        res->success = false;
+        res->message = "unknown motor_id=" + std::to_string(req->motor_id);
+        return;
+      }
+      const auto pid = motor->read_position_loop_pid();
+      if (!pid) {
+        res->success = false;
+        res->message = motor->error_hint();
+        return;
+      }
+      res->success = true;
+      res->message = "ok";
+      res->p = pid->p;
+      res->i = pid->i;
+      res->d = pid->d;
+    });
+
+  auto set_pos_pid_srv = node->create_service<robot_interfaces::srv::SetMotorPositionLoopPid>(
+    "/motor/set_position_loop_pid",
+    [&node, lookup_motor](const std::shared_ptr<robot_interfaces::srv::SetMotorPositionLoopPid::Request> req,
+                          std::shared_ptr<robot_interfaces::srv::SetMotorPositionLoopPid::Response> res) {
+      auto * motor = lookup_motor(req->motor_id);
+      if (!motor) {
+        res->success = false;
+        res->message = "unknown motor_id=" + std::to_string(req->motor_id);
+        return;
+      }
+      if (!motor->set_position_loop_pid(req->p, req->i, req->d)) {
+        res->success = false;
+        res->message = motor->error_hint();
+        return;
+      }
+      if (!motor->save_parameters()) {
+        res->success = false;
+        res->message = std::string("PID 已写入但掉电保存失败: ") + motor->error_hint();
+        return;
+      }
+      const auto pid = motor->read_position_loop_pid();
+      if (!pid) {
+        res->success = false;
+        res->message = motor->error_hint();
+        return;
+      }
+      res->success = true;
+      res->message = "ok";
+      res->p = pid->p;
+      res->i = pid->i;
+      res->d = pid->d;
+    });
+
   // 不再支持启动自动标定。请通过 /arm/calibrate Action 手动触发（带进度反馈）
+
+  auto teleop_cb_group = node->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+  rclcpp::SubscriptionOptions teleop_sub_options;
+  teleop_sub_options.callback_group = teleop_cb_group;
 
   auto chassis_sub = node->create_subscription<geometry_msgs::msg::Twist>(
     chassis_topic, rclcpp::QoS(10),
@@ -447,7 +520,8 @@ int main(int argc, char ** argv)
           node->get_logger(), *node->get_clock(), 2000,
           "底盘 set_twist 失败");
       }
-    });
+    },
+    teleop_sub_options);
 
   auto arm_sub = node->create_subscription<sensor_msgs::msg::JointState>(
     arm_topic, rclcpp::QoS(10),
@@ -477,6 +551,49 @@ int main(int argc, char ** argv)
           node->get_logger(), *node->get_clock(), 2000,
           "%s", detail.c_str());
       }
+    },
+    teleop_sub_options);
+
+  struct ArmJointSnapshot
+  {
+    std::mutex mu;
+    std::array<double, 3> spans{};
+    bool valid{false};
+  } arm_snapshot;
+  std::atomic<bool> arm_state_worker_run{true};
+  const double arm_state_hz = std::max(1.0, arm_state_rate_hz);
+  const auto arm_state_period = std::chrono::milliseconds(
+    static_cast<int>(1000.0 / arm_state_hz));
+
+  std::thread arm_state_worker([&]() {
+    while (arm_state_worker_run.load() && rclcpp::ok()) {
+      const auto spans = platform.arm().read_joint_spans();
+      if (spans) {
+        std::lock_guard<std::mutex> lk(arm_snapshot.mu);
+        arm_snapshot.spans = *spans;
+        arm_snapshot.valid = true;
+      }
+      std::this_thread::sleep_for(arm_state_period);
+    }
+  });
+
+  auto arm_state_pub = node->create_publisher<sensor_msgs::msg::JointState>(arm_state_topic, 10);
+  auto arm_state_timer = node->create_wall_timer(
+    arm_state_period,
+    [node, arm_state_pub, arm_joint_names, &arm_snapshot]() {
+      std::array<double, 3> spans{};
+      {
+        std::lock_guard<std::mutex> lk(arm_snapshot.mu);
+        if (!arm_snapshot.valid) {
+          return;
+        }
+        spans = arm_snapshot.spans;
+      }
+      sensor_msgs::msg::JointState js;
+      js.header.stamp = node->now();
+      js.name = arm_joint_names;
+      js.position = {spans[0], spans[1], spans[2]};
+      arm_state_pub->publish(js);
     });
 
   // IMU 订阅：将最新 Yaw 同时注入 Platform（内部转发给底盘 SDK 供 move/span 闭环 + 维护 offset）
@@ -886,14 +1003,19 @@ int main(int argc, char ** argv)
 
   RCLCPP_INFO(
     node->get_logger(),
-    "robot_platform 运行中：底盘 Twist [%s]，机械臂 JointState [%s]，IMU [%s]，7Hz map->base_link TF，"
+    "robot_platform 运行中：底盘 Twist [%s]，机械臂命令 [%s]，机械臂状态 [%s] @ %.0fHz，IMU [%s]，7Hz map->base_link TF，"
     "服务: /chassis/set_mode /imu/reset_zero /motor/get_state /motor/get_speed_loop_pid /motor/set_speed_loop_pid "
+    "/motor/get_position_loop_pid /motor/set_position_loop_pid "
     "/arm/start_motion_recording /arm/finish_motion_recording，"
     "Actions: /chassis/move /chassis/span /arm/calibrate /arm/play_motion",
-    chassis_topic.c_str(), arm_topic.c_str(), imu_topic.c_str());
-  rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 4);
+    chassis_topic.c_str(), arm_topic.c_str(), arm_state_topic.c_str(), arm_state_hz, imu_topic.c_str());
+  rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 6);
   executor.add_node(node);
   executor.spin();
+  arm_state_worker_run = false;
+  if (arm_state_worker.joinable()) {
+    arm_state_worker.join();
+  }
   platform.close();
   rclcpp::shutdown();
   return 0;

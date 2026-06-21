@@ -45,10 +45,13 @@ public:
   bool save_parameters();
   bool enable_stall_protection(std::uint16_t stall_current_ma);
   bool set_speed_loop_pid(std::uint32_t p, std::uint32_t i, std::uint32_t d);
+  bool set_position_loop_pid(std::uint32_t p, std::uint32_t i, std::uint32_t d);
   /** 手册 4.3.18：读取系统参数（0x31），每次调用即发 CAN，无内部缓存 */
   std::optional<Pd42SystemParameters> read_system_parameters();
   /** 手册 4.3.7：读取速度环 PID（0x26） */
   std::optional<Pd42SpeedLoopPid> read_speed_loop_pid();
+  /** 手册：读取位置环 PID（0x27） */
+  std::optional<Pd42PositionLoopPid> read_position_loop_pid();
 
   std::optional<int16_t> rpm();
   std::optional<int32_t> pos();

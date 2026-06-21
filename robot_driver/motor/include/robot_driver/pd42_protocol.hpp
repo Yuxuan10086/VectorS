@@ -356,6 +356,12 @@ inline std::vector<uint8_t> make_read_speed_loop_pid_frame(uint8_t addr)
   return build_downlink(addr, 0x26);
 }
 
+/** 手册：读取位置环 PID 参数（0x27） */
+inline std::vector<uint8_t> make_read_position_loop_pid_frame(uint8_t addr)
+{
+  return build_downlink(addr, 0x27);
+}
+
 /** 手册 4.3.18：读取系统参数（0x31） */
 inline std::vector<uint8_t> make_read_system_parameters_frame(uint8_t addr)
 {
@@ -386,6 +392,32 @@ inline std::vector<uint8_t> make_set_speed_loop_pid_frame(
   pl[10] = be_d[2];
   pl[11] = be_d[3];
   return build_downlink(addr, 0x73, pl.data(), pl.size());
+}
+
+/** 手册：设置位置环 PID 参数（0x63）；P/I/D 为大端 uint32_t */
+inline std::vector<uint8_t> make_set_position_loop_pid_frame(
+  uint8_t addr, uint32_t p, uint32_t i, uint32_t d)
+{
+  std::array<uint8_t, 4> be_p{};
+  std::array<uint8_t, 4> be_i{};
+  std::array<uint8_t, 4> be_d{};
+  uint32_to_big_endian(p, be_p);
+  uint32_to_big_endian(i, be_i);
+  uint32_to_big_endian(d, be_d);
+  std::array<uint8_t, 12> pl{};
+  pl[0] = be_p[0];
+  pl[1] = be_p[1];
+  pl[2] = be_p[2];
+  pl[3] = be_p[3];
+  pl[4] = be_i[0];
+  pl[5] = be_i[1];
+  pl[6] = be_i[2];
+  pl[7] = be_i[3];
+  pl[8] = be_d[0];
+  pl[9] = be_d[1];
+  pl[10] = be_d[2];
+  pl[11] = be_d[3];
+  return build_downlink(addr, 0x63, pl.data(), pl.size());
 }
 
 /** 0x29 应答：Byte2~3 实时转速 int16（RPM），大端 */
@@ -463,6 +495,9 @@ struct Pd42SpeedLoopPid
   uint32_t d{};
 };
 
+/** 位置环 PID 参数（0x63 下行 / 0x27 应答同形） */
+using Pd42PositionLoopPid = Pd42SpeedLoopPid;
+
 /** 0x26 应答：Byte2~5 P，Byte6~9 I，Byte10~13 D（大端 uint32） */
 inline std::optional<Pd42SpeedLoopPid> parse_read_speed_loop_pid(const std::vector<uint8_t> & frame)
 {
@@ -473,6 +508,22 @@ inline std::optional<Pd42SpeedLoopPid> parse_read_speed_loop_pid(const std::vect
   const uint8_t bi[4] = {frame[8], frame[9], frame[10], frame[11]};
   const uint8_t bd[4] = {frame[12], frame[13], frame[14], frame[15]};
   Pd42SpeedLoopPid out{};
+  out.p = uint32_from_big_endian(bp);
+  out.i = uint32_from_big_endian(bi);
+  out.d = uint32_from_big_endian(bd);
+  return out;
+}
+
+/** 0x27 应答：与速度环同形 */
+inline std::optional<Pd42PositionLoopPid> parse_read_position_loop_pid(const std::vector<uint8_t> & frame)
+{
+  if (!reply_success(frame, 0x27) || frame.size() < 18U) {
+    return std::nullopt;
+  }
+  const uint8_t bp[4] = {frame[4], frame[5], frame[6], frame[7]};
+  const uint8_t bi[4] = {frame[8], frame[9], frame[10], frame[11]};
+  const uint8_t bd[4] = {frame[12], frame[13], frame[14], frame[15]};
+  Pd42PositionLoopPid out{};
   out.p = uint32_from_big_endian(bp);
   out.i = uint32_from_big_endian(bi);
   out.d = uint32_from_big_endian(bd);

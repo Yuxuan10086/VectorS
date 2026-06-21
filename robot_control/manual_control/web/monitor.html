@@ -19,7 +19,7 @@
   <header class="border-b border-slate-800 bg-slate-950/80 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
     <div>
       <h1 class="text-xl font-semibold tracking-tight">电机系统监控</h1>
-      <p class="text-xs text-slate-500">0x31 系统参数 · 速度环 PID · 固定时间窗实时曲线</p>
+      <p class="text-xs text-slate-500">0x31 系统参数 · 速度/位置环 PID · 机械臂位置曲线</p>
     </div>
     <div class="flex items-center gap-3 flex-wrap">
       <label class="flex items-center gap-2 text-sm bg-slate-900 border border-slate-800 rounded-full px-3 py-1.5">
@@ -49,6 +49,7 @@
       { motor_id: 2, label: 'j2',    title: 'J2 (ID 2)' },
     ];
     const CHASSIS_WHEEL_IDS = [5, 4];
+    const ARM_IDS = [1, 3, 2];
 
     let WINDOW_SEC = 60;
     const charts = {};
@@ -126,25 +127,48 @@
 
     function initCard(m) {
       const id = m.motor_id;
-      const showPid = !CHASSIS_WHEEL_IDS.includes(id);
-      history[id] = { v: [], c: [], r: [] };
+      const isArm = ARM_IDS.includes(id);
+      history[id] = isArm ? { v: [], c: [], p: [] } : { v: [], c: [], r: [] };
       const el = document.createElement('section');
       el.id = `card-${id}`;
       el.className = 'panel rounded-2xl p-5 motor-disabled';
-      const pidBlock = showPid ? `
-        <div class="border-t border-slate-800 pt-4">
-          <div class="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wide">速度环 PID</div>
-          <div class="grid grid-cols-3 gap-2 mb-2">
-            <label class="text-xs">P<input id="pid-p-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
-            <label class="text-xs">I<input id="pid-i-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
-            <label class="text-xs">D<input id="pid-d-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+      const armPidBlock = isArm ? `
+        <div class="border-t border-slate-800 pt-4 space-y-4">
+          <div>
+            <div class="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wide">速度环 PID</div>
+            <div class="grid grid-cols-3 gap-2 mb-2">
+              <label class="text-xs">P<input id="pid-p-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+              <label class="text-xs">I<input id="pid-i-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+              <label class="text-xs">D<input id="pid-d-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="readPid(${id})" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700">读取</button>
+              <button onclick="applyPid(${id})" class="text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white">应用</button>
+            </div>
+            <p id="pid-msg-${id}" class="text-xs text-slate-500 mt-2"></p>
           </div>
-          <div class="flex gap-2">
-            <button onclick="readPid(${id})" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700">读取</button>
-            <button onclick="applyPid(${id})" class="text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white">应用</button>
+          <div>
+            <div class="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wide">位置环 PID</div>
+            <div class="grid grid-cols-3 gap-2 mb-2">
+              <label class="text-xs">P<input id="pos-pid-p-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+              <label class="text-xs">I<input id="pos-pid-i-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+              <label class="text-xs">D<input id="pos-pid-d-${id}" type="number" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm metric"></label>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="readPosPid(${id})" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700">读取</button>
+              <button onclick="applyPosPid(${id})" class="text-xs px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white">应用</button>
+            </div>
+            <p id="pos-pid-msg-${id}" class="text-xs text-slate-500 mt-2"></p>
           </div>
-          <p id="pid-msg-${id}" class="text-xs text-slate-500 mt-2"></p>
         </div>` : '';
+      const chartBlock = isArm ? `
+            <div><div class="text-xs text-slate-500 mb-1">母线电压 (V)</div><div class="chart-box"><canvas id="chart-v-${id}"></canvas></div></div>
+            <div><div class="text-xs text-slate-500 mb-1">相电流 (mA)</div><div class="chart-box"><canvas id="chart-c-${id}"></canvas></div></div>
+            <div><div class="text-xs text-slate-500 mb-1">实时位置（脉冲）· 红虚线=目标</div><div class="chart-box"><canvas id="chart-p-${id}"></canvas></div></div>`
+        : `
+            <div><div class="text-xs text-slate-500 mb-1">母线电压 (V)</div><div class="chart-box"><canvas id="chart-v-${id}"></canvas></div></div>
+            <div><div class="text-xs text-slate-500 mb-1">相电流 (mA)</div><div class="chart-box"><canvas id="chart-c-${id}"></canvas></div></div>
+            <div><div class="text-xs text-slate-500 mb-1">转速 (RPM)</div><div class="chart-box"><canvas id="chart-r-${id}"></canvas></div></div>`;
       el.innerHTML = `
         <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
@@ -172,32 +196,55 @@
         </div>
         <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
           <div class="md:col-span-3 flex flex-col gap-3">
-            <div><div class="text-xs text-slate-500 mb-1">母线电压 (V)</div><div class="chart-box"><canvas id="chart-v-${id}"></canvas></div></div>
-            <div><div class="text-xs text-slate-500 mb-1">相电流 (mA)</div><div class="chart-box"><canvas id="chart-c-${id}"></canvas></div></div>
-            <div><div class="text-xs text-slate-500 mb-1">转速 (RPM)</div><div class="chart-box"><canvas id="chart-r-${id}"></canvas></div></div>
+            ${chartBlock}
           </div>
           <div id="static-${id}" class="md:col-span-2 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 gap-x-3 gap-y-2 text-xs text-slate-400 self-start"></div>
         </div>
-        ${pidBlock}`;
+        ${armPidBlock}`;
       document.getElementById('motor-grid').appendChild(el);
 
-      charts[id] = {
-        v: new Chart(document.getElementById(`chart-v-${id}`), {
-          type: 'line',
-          data: { datasets: [{ data: [], borderColor: '#38bdf8', tension: 0.15 }] },
-          options: makeChartOptions('#38bdf8'),
-        }),
-        c: new Chart(document.getElementById(`chart-c-${id}`), {
-          type: 'line',
-          data: { datasets: [{ data: [], borderColor: '#fbbf24', tension: 0.15 }] },
-          options: makeChartOptions('#fbbf24'),
-        }),
-        r: new Chart(document.getElementById(`chart-r-${id}`), {
-          type: 'line',
-          data: { datasets: [{ data: [], borderColor: '#4ade80', tension: 0.15 }] },
-          options: makeChartOptions('#4ade80'),
-        }),
-      };
+      if (isArm) {
+        charts[id] = {
+          v: new Chart(document.getElementById(`chart-v-${id}`), {
+            type: 'line',
+            data: { datasets: [{ data: [], borderColor: '#38bdf8', tension: 0.15 }] },
+            options: makeChartOptions('#38bdf8'),
+          }),
+          c: new Chart(document.getElementById(`chart-c-${id}`), {
+            type: 'line',
+            data: { datasets: [{ data: [], borderColor: '#fbbf24', tension: 0.15 }] },
+            options: makeChartOptions('#fbbf24'),
+          }),
+          p: new Chart(document.getElementById(`chart-p-${id}`), {
+            type: 'line',
+            data: {
+              datasets: [
+                { label: '位置', data: [], borderColor: '#4ade80', tension: 0.15 },
+                { label: '目标', data: [], borderColor: '#f87171', borderDash: [6, 4], tension: 0, pointRadius: 0 },
+              ],
+            },
+            options: makeChartOptions('#4ade80'),
+          }),
+        };
+      } else {
+        charts[id] = {
+          v: new Chart(document.getElementById(`chart-v-${id}`), {
+            type: 'line',
+            data: { datasets: [{ data: [], borderColor: '#38bdf8', tension: 0.15 }] },
+            options: makeChartOptions('#38bdf8'),
+          }),
+          c: new Chart(document.getElementById(`chart-c-${id}`), {
+            type: 'line',
+            data: { datasets: [{ data: [], borderColor: '#fbbf24', tension: 0.15 }] },
+            options: makeChartOptions('#fbbf24'),
+          }),
+          r: new Chart(document.getElementById(`chart-r-${id}`), {
+            type: 'line',
+            data: { datasets: [{ data: [], borderColor: '#4ade80', tension: 0.15 }] },
+            options: makeChartOptions('#4ade80'),
+          }),
+        };
+      }
       renderStatic(id, null);
     }
 
@@ -225,10 +272,31 @@
       const min = now - windowMs();
       for (const id of Object.keys(charts)) {
         const h = history[id];
-        for (const key of ['v', 'c', 'r']) {
+        const isArm = ARM_IDS.includes(Number(id));
+        for (const key of ['v', 'c']) {
           pruneSeries(h[key]);
           const chart = charts[id][key];
           chart.data.datasets[0].data = h[key];
+          chart.options.scales.x.min = min;
+          chart.options.scales.x.max = now;
+          chart.update('none');
+        }
+        if (isArm) {
+          pruneSeries(h.p);
+          const chart = charts[id].p;
+          chart.data.datasets[0].data = h.p;
+          const targetY = h.p.length ? h.p[h.p.length - 1].targetY : 0;
+          chart.data.datasets[1].data = [
+            { x: min, y: targetY },
+            { x: now, y: targetY },
+          ];
+          chart.options.scales.x.min = min;
+          chart.options.scales.x.max = now;
+          chart.update('none');
+        } else {
+          pruneSeries(h.r);
+          const chart = charts[id].r;
+          chart.data.datasets[0].data = h.r;
           chart.options.scales.x.min = min;
           chart.options.scales.x.max = now;
           chart.update('none');
@@ -243,16 +311,25 @@
 
     function renderStatic(id, st) {
       const el = document.getElementById(`static-${id}`);
+      const isArm = ARM_IDS.includes(id);
       if (!st) {
         el.innerHTML = '<p class="col-span-full text-slate-600">等待数据…</p>';
         return;
       }
+      const rpmBlock = isArm ? `
+        <div class="col-span-full mb-2 pb-2 border-b border-slate-800">
+          <div class="text-slate-500">转速 (RPM)</div>
+          <div class="metric text-2xl font-semibold text-emerald-400">${st.rpm ?? '—'}</div>
+        </div>` : '';
       const rows = [
         ['磁链', st.flux_mwb?.toFixed?.(2) ?? st.flux_mwb, 'mWb'],
         ['相电阻', st.phase_resistance_ohm?.toFixed?.(2) ?? st.phase_resistance_ohm, 'Ω'],
         ['相电感', st.phase_inductance_mh?.toFixed?.(2) ?? st.phase_inductance_mh, 'mH'],
-        ['目标位置', st.target_position, ''],
-        ['实时位置', st.position, ''],
+      ];
+      if (!isArm) {
+        rows.push(['转速', st.rpm, 'RPM']);
+      }
+      rows.push(
         ['位置误差', st.position_error, ''],
         ['脉冲计数', st.pulse_count, ''],
         ['使能', st.enabled ? '是' : '否', ''],
@@ -260,8 +337,8 @@
         ['堵转', st.stalled ? '是' : '否', ''],
         ['地址模式', st.addr_mode, ''],
         ['错误', st.error_hint || '—', ''],
-      ];
-      el.innerHTML = rows.map(([k, v, unit]) => `
+      );
+      el.innerHTML = rpmBlock + rows.map(([k, v, unit]) => `
         <div class="min-w-0 border-b border-slate-800/50 pb-1.5">
           <div class="text-slate-500 truncate" title="${k}">${k}${unit ? ` (${unit})` : ''}</div>
           <div class="metric text-slate-300 truncate" title="${v}">${v}</div>
@@ -269,11 +346,31 @@
       `).join('');
     }
 
+    function pushArmPositionChart(id, position, target) {
+      const h = history[id];
+      const now = Date.now();
+      h.p.push({ x: now, y: position, targetY: target });
+      const bounds = pruneSeries(h.p);
+      const chart = charts[id].p;
+      chart.data.datasets[0].data = h.p.map(pt => ({ x: pt.x, y: pt.y }));
+      chart.data.datasets[1].data = [
+        { x: bounds.min, y: target },
+        { x: bounds.now, y: target },
+      ];
+      chart.options.scales.x.min = bounds.min;
+      chart.options.scales.x.max = bounds.now;
+      chart.update('none');
+    }
+
     function pushHistory(id, st) {
       const h = history[id];
       updateChart(charts[id].v, h.v, st.bus_voltage_v);
       updateChart(charts[id].c, h.c, st.phase_current_ma);
-      updateChart(charts[id].r, h.r, st.rpm);
+      if (ARM_IDS.includes(id)) {
+        pushArmPositionChart(id, st.position, st.target_position);
+      } else {
+        updateChart(charts[id].r, h.r, st.rpm);
+      }
       renderStatic(id, st);
     }
 
@@ -304,6 +401,17 @@
       const i = parseInt(document.getElementById(`pid-i-${id}`).value, 10) || 0;
       const d = parseInt(document.getElementById(`pid-d-${id}`).value, 10) || 0;
       ws.send(JSON.stringify({ type: 'set_pid', motor_id: id, p, i, d }));
+    }
+
+    function readPosPid(id) {
+      ws.send(JSON.stringify({ type: 'get_pos_pid', motor_id: id }));
+    }
+
+    function applyPosPid(id) {
+      const p = parseInt(document.getElementById(`pos-pid-p-${id}`).value, 10) || 0;
+      const i = parseInt(document.getElementById(`pos-pid-i-${id}`).value, 10) || 0;
+      const d = parseInt(document.getElementById(`pos-pid-d-${id}`).value, 10) || 0;
+      ws.send(JSON.stringify({ type: 'set_pos_pid', motor_id: id, p, i, d }));
     }
 
     function readChassisPid() {
@@ -426,12 +534,27 @@
             }
             return;
           }
+          if (!ARM_IDS.includes(id)) return;
           const el = document.getElementById(`pid-msg-${id}`);
           if (!el) return;
           if (msg.success) {
             document.getElementById(`pid-p-${id}`).value = msg.p;
             document.getElementById(`pid-i-${id}`).value = msg.i;
             document.getElementById(`pid-d-${id}`).value = msg.d;
+            el.textContent = msg.message || 'OK';
+            el.className = 'text-xs text-emerald-400 mt-2';
+          } else {
+            el.textContent = msg.message || '失败';
+            el.className = 'text-xs text-red-400 mt-2';
+          }
+        } else if (msg.type === 'pos_pid_result') {
+          const id = msg.motor_id;
+          const el = document.getElementById(`pos-pid-msg-${id}`);
+          if (!el) return;
+          if (msg.success) {
+            document.getElementById(`pos-pid-p-${id}`).value = msg.p;
+            document.getElementById(`pos-pid-i-${id}`).value = msg.i;
+            document.getElementById(`pos-pid-d-${id}`).value = msg.d;
             el.textContent = msg.message || 'OK';
             el.className = 'text-xs text-emerald-400 mt-2';
           } else {

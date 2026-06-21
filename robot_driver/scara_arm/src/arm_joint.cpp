@@ -97,16 +97,29 @@ std::optional<bool> ArmJoint::is_arrived()
   return motor_.arrived_flag();
 }
 
-bool ArmJoint::is_at_target_span(double span)
+bool ArmJoint::is_at_target_span(double span, double span_eps)
 {
-  const auto pulse_opt = span_to_pulse(span);
-  if (!pulse_opt) {
+  if (!std::isfinite(span) || span_eps <= 0.0) {
     return false;
   }
-  const std::int32_t target_pulse = *pulse_opt;
 
   const auto cur_opt = motor_.pos();
-  if (cur_opt.has_value()) {
+  if (!cur_opt.has_value()) {
+    const auto arrived = motor_.arrived_flag();
+    return arrived.has_value() && *arrived;
+  }
+
+  if (stop_fwd_ && span_max_ > 0.0) {
+    const double Hd = static_cast<double>(*stop_fwd_);
+    const double span_meas = (static_cast<double>(*cur_opt) / Hd) * span_max_;
+    if (std::abs(span_meas - span) <= span_eps) {
+      return true;
+    }
+  }
+
+  const auto pulse_opt = span_to_pulse(span);
+  if (pulse_opt.has_value()) {
+    const std::int32_t target_pulse = *pulse_opt;
     const std::int64_t pd =
       static_cast<std::int64_t>(target_pulse) - static_cast<std::int64_t>(*cur_opt);
     if (pd <= static_cast<std::int64_t>(kPulseRepeatTol) &&
@@ -115,7 +128,7 @@ bool ArmJoint::is_at_target_span(double span)
       return true;
     }
     const auto rpm_opt = motor_.rpm();
-    if (rpm_opt.has_value() && std::abs(*rpm_opt) <= 3 &&
+    if (rpm_opt.has_value() && std::abs(*rpm_opt) <= 10 &&
         pd <= static_cast<std::int64_t>(kPulseRepeatTol * 2) &&
         pd >= -static_cast<std::int64_t>(kPulseRepeatTol * 2))
     {

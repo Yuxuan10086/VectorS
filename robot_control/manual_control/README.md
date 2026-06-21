@@ -34,10 +34,7 @@ ros2 launch manual_control web_panel.launch.py
 # 终端1：整机硬件（必须先启动）
 ros2 launch robot_platform platform.launch.py
 
-# 终端2（可选）：避障
-ros2 launch scan_safety simple_scan_safety.launch.py
-
-# 终端3：网页控制面板
+# 终端2：网页控制面板
 ros2 launch manual_control web_panel.launch.py web_port:=8081
 ```
 
@@ -73,6 +70,9 @@ ros2 launch manual_control web_panel.launch.py \
 - 调用 `/chassis/set_mode` (`robot_interfaces/srv/SetDriveMode`)
 - Action `/chassis/move` (`robot_interfaces/action/ChassisMove`)
 - Action `/chassis/span` (`robot_interfaces/action/ChassisSpan`)
+- Action `/arm/calibrate` (`robot_interfaces/action/ArmCalibrate`)
+- Action `/arm/play_motion` (`robot_interfaces/action/ArmPlayMotion`)
+- Service `/arm/start_motion_recording`、`/arm/finish_motion_recording`
 
 默认话题名与 `robot_platform` 一致，可通过参数覆盖。
 

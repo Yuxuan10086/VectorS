@@ -410,14 +410,19 @@
         <thead><tr><th>子目录</th><th>ROS 包名</th><th>说明</th></tr></thead>
         <tbody>
           <tr>
-            <td><code>scan_safety/</code></td>
-            <td><code>scan_safety</code></td>
-            <td>LaserScan 避障，见 <code>README.md</code></td>
+            <td><code>robot_interfaces/</code></td>
+            <td><code>robot_interfaces</code></td>
+            <td>自定义 msg/srv/action</td>
           </tr>
           <tr>
             <td><code>robot_platform/</code></td>
             <td><code>robot_platform</code></td>
-            <td>共用 CAN，装配底盘 + 机械臂</td>
+            <td>整机硬件节点 <code>platform_node</code></td>
+          </tr>
+          <tr>
+            <td><code>manual_control/</code></td>
+            <td><code>manual_control</code></td>
+            <td>Web 控制面板</td>
           </tr>
         </tbody>
       </table>
@@ -458,9 +463,10 @@
 
       <h3>2.3 <code>robot_control</code> 子包</h3>
       <ul>
-        <li>模块说明：<code>robot_control/README.md</code></li>
-        <li><code>robot_platform</code>：装配 CAN + 底盘 + 机械臂</li>
-        <li><code>scan_safety</code>：避障</li>
+        <li>模块说明：<code>robot_control/README.md</code>（各包 ROS 接口总表）</li>
+        <li><code>robot_interfaces</code>：接口定义</li>
+        <li><code>robot_platform</code>：底盘 + 机械臂 + IMU + TF</li>
+        <li><code>manual_control</code>：Web 控制面板</li>
       </ul>
     </section>
 
